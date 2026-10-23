@@ -42,9 +42,11 @@ docker run --platform linux/amd64 --detach \
   --tmpfs /tmp:rw,noexec,nosuid,size=16m \
   --cap-drop ALL \
   --security-opt no-new-privileges \
+  --security-opt seccomp=unconfined \
   --pids-limit 128 \
   --memory 512m \
   --cpus 1.0 \
+  -e N2S_DISABLE_ASLR=1 \
   --publish 127.0.0.1:3000:3000 \
   "$image" >/dev/null
 

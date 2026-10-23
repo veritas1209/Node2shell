@@ -1,105 +1,51 @@
-# Node2Shell (CVE-2026-111497) 재현 기록
+# Node2Shell (CVE-2026-111497) 격리 재현
 
 > [!CAUTION]
-> **이 자료는 보안 연구, 교육 및 방어 목적의 검증을 위해서만 사용해 주세요.**
+> **이 자료는 보안 연구, 교육 및 방어 검증 목적으로만 사용해 주세요.**
 >
-> 이 자료는 본인이 소유하거나 명시적으로 허가받은 격리 환경에서만 사용해야 합니다.
-> 제3자 시스템에 대한 접근, 서비스 중단, 데이터 수집, 지속성 확보 또는 탐지 회피에
+> 본인이 소유하거나 명시적으로 허가받은 격리 환경에서만 실행해 주세요. 제3자
+> 시스템에 대한 접근, 서비스 중단, 데이터 수집, 지속성 확보 또는 탐지 회피에
 > 사용해서는 안 됩니다.
 
-## 결론
+Node.js에 포함된 Brotli 디코더의 out-of-bounds write인
+CVE-2026-111497을 WSL Ubuntu 24.04의 로컬 Docker 환경에서 검증한 기록이다.
+외부 대상이나 임의 명령을 받지 않으며, RCE 증명은 고정된 `/n2s`가 출력하는
+프로세스별 nonce와 `/usr/bin/id` 결과로만 수행한다.
 
-2026-10-23, WSL Ubuntu 24.04의 Docker에서 공개 PoC를 검토하고 Node.js의
-Brotli 디코더 취약점인 CVE-2026-111497을 재현했다.
+## 결과
 
-| 항목 | 결과 |
-| --- | --- |
-| 취약 환경 | Node.js `v24.22.0`, Express `5.3.0`, body-parser `2.4.0`, Linux x86-64 |
-| 공격 표면 | `Content-Encoding: br` 요청을 처리하는 `express.json()` |
-| RCE 증명 | HTTP 요청 소켓으로 `/usr/bin/id`의 새 출력이 반환됨 |
-| 실제 출력 | `uid=1000(node) gid=1000(node) groups=1000(node)` |
-| 성공 시도 | 1/16 |
-| 수정 환경 | Node.js `v24.22.1`, 같은 Express 앱과 패키지 잠금 파일 |
-| 수정 환경 결과 | `ERR__ERROR_FORMAT_BLOCK_SWITCH`, 명령 실행 없음, 서비스 정상 |
+2026-10-23 기준 Node.js 공식 배포 목록에 존재하는 영향 범위 내의 모든
+`linux-x64` 릴리스에서 동일한 Express 요청 경로를 통해 RCE를 확인했다.
 
-`id`는 상태를 변경하지 않는 비파괴적 명령이다. 역방향 셸, 파일 생성·삭제,
-권한 상승, 자격 증명 접근 또는 외부 시스템 접속은 수행하지 않았다.
+| 계열 | 확인한 정확한 범위 | 공식 릴리스 수 | RCE 확인 |
+| --- | --- | ---: | ---: |
+| 22.x | `22.0.0`–`22.23.3` | 36 | 36/36 |
+| 24.x | `24.0.0`–`24.22.0` | 30 | 30/30 |
+| 26.x | `26.0.0`–`26.12.0` | 18 | 18/18 |
+| 합계 | 공식 영향 범위의 Linux x86-64 릴리스 | **84** | **84/84** |
 
-## 개선된 자체 실험 하네스
+전체 집계는 [evidence/matrix/summary.json](evidence/matrix/summary.json), 각 버전의
+아카이브 SHA-256·Node 바이너리 SHA-256·런타임 보정값·시도별 결과·nonce와
+`id` 증거는 `evidence/matrix/<version>.json`에 기록했다. 대응하는 정확한
+바이너리 프로필은 `poc/profiles/<version>.json`에 있다.
 
-이 저장소에는 원본 PoC 소스를 복사하지 않고 새로 작성한 loopback 전용 실험
-하네스를 추가했다. 목표는 명령 실행 범위를 넓히는 것이 아니라, Express RCE의
-성공 판정을 더 엄격하고 재현 가능하게 만드는 것이다.
+이 84/84 결과의 범위는 다음 조건으로 한정된다.
 
-기존 공개 PoC의 Express 체인은 고정된 `/usr/bin/id` 출력만 확인한다. 새 하네스는
-각 Node 프로세스가 시작될 때 128비트 nonce를 만들고 다음 두 경로에서 같은 값을
-사용한다.
+- Node.js 공식 `node-v<version>-linux-x64.tar.xz` 바이너리
+- Express `5.3.0`, body-parser `2.4.0`, Debian bookworm 사용자 공간
+- `UV_THREADPOOL_SIZE=1`
+- ASLR을 끈 재현 전용 컨테이너와 버전별 읽기 전용 GDB 보정
+- loopback의 `127.0.0.1:3000`만 사용하는 고정 실험 앱
 
-1. exploit 전에 `GET /health`로 현재 프로세스의 nonce를 읽는다.
-2. ROP 체인은 임의 명령 대신 고정된 `/n2s`만 실행한다. `/n2s`는 같은 nonce와
-   `/usr/bin/id` 결과를 요청 소켓으로 출력한다.
+따라서 다른 운영체제, CPU 아키텍처, 배포판 재빌드 또는 ASLR이 켜진 운영 환경에
+그대로 일반화한 결과는 아니다. 여기서 ASLR을 끈 이유는 공식 바이너리별 exploit
+체인을 결정적으로 검증하기 위해서이며, 운영 환경용 우회 기법을 구현하려는 것이
+아니다.
 
-두 값이 모두 일치해야만 `rce-verified`로 판정한다. 크래시, 빈 응답, 이전
-프로세스의 출력, nonce만 있는 응답 및 `id`만 있는 응답은 모두 실패다. 이번
-실험에서는 첫 두 시도가 무응답으로 실패했고, 세 번째 새 프로세스에서 다음 증거를
-받았다.
+## 공식 취약 버전 범위
 
-```text
-proof_marker=N2S-PROOF:3401d6df1b44bb1ac826258137c1f70d
-proof_stdout=uid=1000(node) gid=1000(node) groups=1000(node)
-proof_channel=exploited HTTP request socket
-successful_attempt=3
-```
-
-같은 입력을 Node.js `24.22.1`에 보낸 음성 대조군은
-`ERR__ERROR_FORMAT_BLOCK_SWITCH`로 거부됐고, nonce가 바뀌지 않아 같은 서버
-프로세스가 계속 정상 동작했음을 확인했다.
-
-### 기존 PoC와의 차이
-
-| 항목 | 기존 Express PoC | 이 저장소의 하네스 |
-| --- | --- | --- |
-| 성공 증거 | 새 `id` 출력 | 현재 프로세스 nonce + 새 `id` 출력 |
-| 실패 판정 | 출력 미관찰 | 크래시·무응답·부분 증거를 각각 실패로 기록 |
-| 패치 대조 | 별도 수동 실행 | 같은 payload의 `--expect patched` 판정 제공 |
-| 대상 | loopback allowlist | `127.0.0.1:3000`으로 코드에 고정 |
-| 실행 명령 | `/usr/bin/id` | 고정 `/n2s`; 임의 명령 인자 없음 |
-| 결과 형식 | 텍스트 | 구조화된 JSON 및 시도별 관찰값 |
-| 컨테이너 | 기본 실행 예시 | read-only, capability 제거, 리소스 제한 |
-| 바이너리 검사 | 프로필에 지문 기록 | 실행 스크립트가 컨테이너 내부 SHA-256 불일치 시 중단 |
-
-### 실행
-
-WSL Ubuntu에서 저장소 루트 기준으로 실행한다. 스크립트는 정확한 이미지
-다이제스트를 빌드하고, Node 바이너리 해시를 검사하며, loopback에만 포트를 연다.
-실험 컨테이너는 종료 시 자동으로 제거한다.
-
-```bash
-chmod +x lab/run.sh
-./lab/run.sh vulnerable
-./lab/run.sh patched
-```
-
-직접 실행할 때도 대상 주소와 명령을 변경하는 옵션은 제공되지 않는다.
-
-```bash
-python3 poc/node2shell_lab.py --attempts 32 --timeout 30
-python3 poc/node2shell_lab.py --expect patched --timeout 30
-```
-
-새 구현의 검증 기록은
-[evidence/2026-10-23-nonce-proof.txt](evidence/2026-10-23-nonce-proof.txt)에 있다.
-이 개선은 성공 증거의 신뢰성과 실험 격리를 강화하지만, ROP 체인의 바이너리별
-가젯, 요청 socket fd `19`, ASLR 위치 추측이라는 기존 정확 프로필 제약은 아직
-제거하지 못했다. 독립 반복에서는 한 배치가 3번째 시도에 성공했지만 다른 16회
-배치는 전부 실패했다. 따라서 기본 예산을 32회로 늘렸으며, `not-verified` 결과는
-패치됨을 뜻하지 않고 이번 ASLR 배치에서 증거를 얻지 못했다는 뜻이다.
-
-## 정확한 버전 범위
-
-### 취약점 자체의 공식 범위
-
-Node.js 공식 권고가 확인한 지원 브랜치의 범위를 버전 간격으로 풀어쓰면 다음과 같다.
+Node.js 공식 권고는 CVE-2026-111497이 22.x, 24.x, 26.x에 영향을 준다고 명시하고
+다음 보안 릴리스를 제공한다.
 
 | Node.js 계열 | 영향받는 범위 | 최초 수정 버전 |
 | --- | --- | --- |
@@ -107,181 +53,122 @@ Node.js 공식 권고가 확인한 지원 브랜치의 범위를 버전 간격�
 | 24.x | `24.0.0` 이상 `24.22.1` 미만 | `24.22.1` |
 | 26.x | `26.0.0` 이상 `26.12.1` 미만 | `26.12.1` |
 
-지원이 종료된 Node.js 계열은 이 보안 릴리스에서 수정본이 제공되지 않았다. 단순히
-`20.x 이하 전체`처럼 하나의 범위로 단정하기보다는, 실행 파일에 포함된 Brotli와
-백포트 여부를 확인해야 한다. 근본 라이브러리 기준으로 CVE가 명시한 영향 범위는
-Google Brotli `1.0.3`부터 `1.2.0`까지이며, 수정 릴리스는 각 계열의 `1.0.10`,
-`1.1.1`, `1.2.1`이다.
+위의 84개는 이 범위와 Node.js 공식 배포 인덱스에서 `linux-x64` 아카이브가 있는
+릴리스를 교차해 산출했다. 지원 종료 계열이나 제3자 빌드는 번들된 Brotli와
+백포트 상태를 별도로 확인해야 한다. 수정 버전 음성 대조군으로는 `24.22.1`에 같은
+입력을 보냈으며, 디코더가 `ERR__ERROR_FORMAT_BLOCK_SWITCH`로 거부하고 같은
+서버 프로세스가 계속 정상 동작하는 것을 확인했다.
 
-### 이 저장소에서 검증한 PoC 범위
+## RCE 판정 방식
 
-취약 버전 범위와 PoC가 실제 RCE에 성공하는 범위는 같지 않다. 이번 Express RCE
-체인은 아래의 정확한 프로필에서만 검증했다.
+컨테이너의 각 Node 프로세스는 시작할 때 128비트 nonce를 만들고 `/health`에
+노출한다. exploit 체인은 명령 문자열을 입력받지 않고 고정된 `/n2s`만 실행한다.
+`/n2s`는 같은 nonce와 `/usr/bin/id` 출력을 exploit된 HTTP 요청 소켓으로 보낸다.
 
-- Node.js `24.22.0` 공식 Linux x86-64 이미지
-- Express `5.3.0` 및 body-parser `2.4.0`
-- Debian bookworm 사용자 공간
-- `UV_THREADPOOL_SIZE=1`, 요청 소켓 fd `19`, 포함된 재시작 감독 루프
+다음 두 조건이 동시에 충족될 때만 `rce-verified`로 기록한다.
 
-원본 PoC가 별도로 RCE를 검증한 프로필은 Node.js `24.9.0`의 worker 기반
-`node:zlib` 및 built-in `fetch()` 경로다. Node.js `20.19.5`, `22.23.3`,
-`24.9.0`, `24.22.0`, `26.12.0`의 일반 비동기 디코딩 프로필에서는 DoS까지
-검증됐지만, 그것만으로 범용 RCE가 입증된 것은 아니다. 따라서 이 PoC를
-`22.x/24.x/26.x 전체에서 동작하는 RCE`로 표현하면 부정확하다.
+1. 응답의 `N2S-PROOF:<nonce>`가 공격 직전 `/health`에서 읽은 현재 프로세스
+   nonce와 정확히 일치한다.
+2. 같은 응답에 새 `/usr/bin/id` 출력이 존재한다.
 
-## 취약점 개요
+크래시, 무응답, 이전 프로세스의 출력, nonce만 있는 응답 및 `id`만 있는 응답은
+모두 실패다. 역방향 셸, 파일 생성·삭제, 권한 상승, 자격 증명 접근 및 외부 시스템
+접속은 수행하지 않았다.
 
-Node.js에 포함된 Brotli 디코더가 잘못된 블록 전환을 처리하면서 오류 상태를
-정상적인 추가 입력 요청처럼 취급해 디코딩을 계속할 수 있었다. 이 잘못된 상태는
-인접 메모리에 대한 out-of-bounds write로 이어질 수 있으며, 정확한 바이너리와
-메모리 배치가 맞는 환경에서는 제어 흐름 탈취와 원격 코드 실행으로 연결된다.
+## 기존 공개 PoC 대비 개선점
 
-이번 재현의 Express 체인은 다음 조건에 의존한다.
+이 저장소의 하네스는 공개 PoC 소스를 복사하지 않고 새로 작성했다. 명령 실행
+범위를 넓히는 대신 정확한 버전 식별, 결정적 재현 및 오탐 방지에 초점을 맞췄다.
 
-- 공식 Node.js `v24.22.0` Linux x86-64 비-PIE 바이너리
-- Express `5.3.0` 및 body-parser `2.4.0`
-- `UV_THREADPOOL_SIZE=1`
-- 허용된 요청 소켓 파일 디스크립터 `19`
-- 실패 시 새 ASLR 배치로 다시 시작하는 컨테이너 내부 감독 루프
-- 프로필에 고정된 ROP 가젯과 ASLR 주소 추측
+| 항목 | 기존 Express PoC | 이 저장소의 통합 v4 하네스 |
+| --- | --- | --- |
+| 검증 범위 | 소수의 고정 프로필 | 공식 영향 Linux x64 릴리스 84개 전부 |
+| 성공 증거 | `id` 출력 관찰 | 현재 프로세스 nonce + 새 `id` 출력 동시 검증 |
+| 실행 대상 | loopback 제한 | `127.0.0.1:3000`으로 코드에 고정 |
+| 실행 프로그램 | 고정 `id` | 고정 `/n2s`; 임의 명령·경로 인수 없음 |
+| 바이너리 확인 | 개별 프로필 지문 | 공식 SHASUMS256와 추출 바이너리 SHA-256 모두 확인 |
+| 주소·FD 처리 | 고정 값 또는 추측 | 버전별 GDB 보정과 요청 socket FD 자동 탐지 |
+| 실패 판정 | 출력 미관찰 | 크래시·무응답·부분 증거·누락 증거를 분리 기록 |
+| 격리 | 기본 컨테이너 | read-only rootfs, capability 제거, no-new-privileges, 리소스 제한 |
 
-따라서 이 결과는 모든 Node.js/Express 배포가 같은 방식으로 악용된다는 뜻이
-아니다. 다만 공식 취약 런타임에서 네트워크 입력만으로 실제 명령 실행에 도달할 수
-있음을 보여준다.
+exploit 로직도 바이너리 차이를 흡수하도록 다음과 같이 바꿨다.
 
-## 출처와 고정 버전
+- saved RIP만 직접 덮는 기존 pivot 대신 saved RBP와 saved RIP의 16바이트 쌍을
+  제어하고 `leave; ret`으로 링 버퍼에 pivot한다. 초기 22.x에서 두 번째 포인터가
+  1 KiB 물리 링 끝을 넘던 문제를 피한다.
+- Node 버전에 따라 달라지는 Brotli fast-copy의 source/destination 레지스터 형태를
+  정적 분석기가 식별한다.
+- `leave; ret`, `pop` 계열, `add rax, 0x90`, 메모리 저장, `execvp` 호출 기반,
+  BSS scratch를 공식 바이너리에서 직접 찾는다.
+- 런타임에서 링 주소, copy source/destination, saved frame 위치와 첫 빈 FD를
+  보정하고, 제어 prefix·bootstrap·ROP·증명 문자열이 겹치지 않는 배치를 고른다.
+- Node 26에서 return 전에 RSI가 초기화되는 차이는 링에서 RAX 기반 주소를 다시
+  구성하는 bootstrap으로 처리한다.
+
+이 개선으로 22.x의 여러 source offset과 FD 19/22 전환, 24.x의 prefix 겹침,
+26.x의 레지스터 상태 및 빌드별 stack 위치 차이를 하나의 체인으로 처리했다.
+
+## 재현 방법
+
+WSL Ubuntu에서 Docker, Python 3, GDB, binutils가 필요하다. 먼저 고정된 기본
+실험 이미지를 만든다.
+
+```bash
+docker build --platform linux/amd64 \
+  -t node2shell-nonce-local:matrix \
+  -f lab/express-nonce-proof/Dockerfile \
+  lab/express-nonce-proof
+```
+
+단일 버전(`24.22.0`)과 수정 대조군(`24.22.1`)은 다음처럼 실행한다. 스크립트는
+정확한 Node 바이너리 해시를 검사하고 컨테이너를 종료 시 제거한다.
+
+```bash
+chmod +x lab/run.sh
+./lab/run.sh vulnerable
+./lab/run.sh patched
+```
+
+전체 공식 범위 또는 특정 버전은 matrix runner로 검증한다. Docker daemon과 다른
+경로를 사용하면 `N2S_DOCKER`, 임시 작업 경로를 바꾸려면
+`N2S_MATRIX_WORKDIR` 환경 변수를 사용할 수 있다.
+
+```bash
+sudo -E python3 tools/verify_release_matrix.py
+sudo -E python3 tools/verify_release_matrix.py --version 22.0.0 --include-verified
+```
+
+runner는 공식 배포 인덱스와 각 릴리스의 `SHASUMS256.txt`를 받고, 해당 버전의
+`bin/node`만 임시로 추출한다. 정적 프로필 생성, 읽기 전용 GDB 보정, 격리 Docker
+검증 뒤 임시 바이너리는 삭제하고 프로필과 JSON 증거만 남긴다. 이미
+`rce-verified`인 버전은 기본적으로 건너뛴다.
+
+단위 테스트는 다음과 같다.
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+## 저장소 구성
+
+- `poc/node2shell_lab.py`: loopback 전용 payload 생성과 엄격한 proof 판정
+- `tools/profile_node_binary.py`: 공식 Node 바이너리의 가젯·copy 형태 정적 분석
+- `tools/verify_release_matrix.py`: 공식 범위 산출, 해시 검증, 보정 및 84개 matrix 실행
+- `poc/profiles/`: 버전별 통합 v4 프로필 84개
+- `evidence/matrix/`: 버전별 검증 증거와 전체 요약
+- `lab/express-nonce-proof/`: Express 앱, 고정 `/n2s`, 감독 루프와 Dockerfile
+- `lab/run.sh`: `24.22.0` 취약/`24.22.1` 수정 대조군 실행기
+
+## 출처
 
 - [Node.js 2026년 10월 보안 릴리스](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)
-- [Imperva의 Node2Shell RCE 검증](https://www.imperva.com/blog/node2shell-from-brotli-data-to-remote-code-execution/)
-- [재현에 사용한 공개 PoC](https://github.com/dimasma0305/CVE-2026-111497-POC/tree/e3382551df02b3ac8c925aeeffb9e0d206f052d4)
+- [Node.js 공식 배포 인덱스](https://nodejs.org/dist/index.json)
+- [Imperva의 Node2Shell RCE 분석](https://www.imperva.com/blog/node2shell-from-brotli-data-to-remote-code-execution/)
+- [검토한 공개 PoC](https://github.com/dimasma0305/CVE-2026-111497-POC/tree/e3382551df02b3ac8c925aeeffb9e0d206f052d4)
 - [upstream Brotli 수정](https://github.com/google/brotli/commit/0ed4268a4401abcb4472096340477cf4af7d1a2b)
 
-사용한 PoC 저장소의 커밋은
-`e3382551df02b3ac8c925aeeffb9e0d206f052d4`로 고정했다. 해당 저장소는
-복제·수정·재배포 권한을 부여하지 않는 라이선스이므로 이 저장소에는 PoC 소스를
-복사하지 않았다. 아래 절차는 원본을 별도 디렉터리에 내려받아 로컬 루프백
-실험실에서만 실행한다.
-
-## 재현 절차
-
-### 1. PoC를 고정 커밋으로 받기
-
-```bash
-git clone https://github.com/dimasma0305/CVE-2026-111497-POC.git upstream
-git -C upstream checkout e3382551df02b3ac8c925aeeffb9e0d206f052d4
-cd upstream
-```
-
-실행 전 `poc.py`를 검토했다. 이 버전은 공격 대상을
-`127.0.0.1`, `::1`, `localhost`로 제한하고, Express RCE 프로필의 명령을
-`/usr/bin/id`로 고정한다. 임의 명령 인수는 받지 않는다.
-
-### 2. 취약 이미지를 빌드하기
-
-Docker Hub의 익명 요청 제한을 피하기 위해 동일한 OCI 다이제스트를 제공하는
-Google 공개 미러를 사용했다.
-
-```bash
-docker pull --platform linux/amd64 \
-  mirror.gcr.io/library/node@sha256:925de64a85319052d6971ae81ef2417da956e8a3a2c4a0fac732327970f017f5
-
-docker build --platform linux/amd64 \
-  --build-arg NODE_IMAGE=mirror.gcr.io/library/node@sha256:925de64a85319052d6971ae81ef2417da956e8a3a2c4a0fac732327970f017f5 \
-  -t cve-2026-111497-lab:v24.22.0-express \
-  -f lab/v24.22.0/express-body-parser/Dockerfile \
-  lab/v24.22.0/express-body-parser
-```
-
-검증한 지문:
-
-```text
-Node version:             v24.22.0
-Node binary SHA-256:      67ca5783febb8bf85736c79fcdd92c8d6d465a0eb2a082672bcdfa76a506751c
-package-lock SHA-256:     c95ad8783444302c2e80a50d32fd92cfa8443e576bf22f6b1587603c6b546b6c
-Express:                  5.3.0
-body-parser:              2.4.0
-```
-
-### 3. 루프백 컨테이너에서 RCE 확인하기
-
-```bash
-docker run --platform linux/amd64 -d \
-  --name cve-111497-express \
-  --entrypoint sh \
-  -e UV_THREADPOOL_SIZE=1 \
-  -p 127.0.0.1:3000:3000 \
-  cve-2026-111497-lab:v24.22.0-express \
-  -lc 'while true; do node /app/server.js; sleep 0.1; done'
-
-python3 poc.py \
-  --profile node-24.22.0-express-5.3.0-bookworm-x86_64 \
-  --timeout 30
-```
-
-관찰한 출력:
-
-```text
-attempt=1/16 staged_position=0x137ed748
-PASS: RCE verified by fresh id output through the declared interface
-profile=node-24.22.0-express-5.3.0-bookworm-x86_64
-proof_channel=HTTP request socket stdout
-proof_command=id
-proof_stdout=uid=1000(node) gid=1000(node) groups=1000(node)
-successful_attempt=1
-```
-
-실험 후 우리가 만든 컨테이너만 제거했다.
-
-```bash
-docker rm -f cve-111497-express
-```
-
-## 수정 버전 대조
-
-같은 앱을 Node.js `v24.22.1` 이미지로 다시 빌드하고 PoC 시도를 1회로 제한했다.
-사용한 이미지 다이제스트는
-`sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a`이며,
-Node 바이너리 SHA-256은
-`e32e2d16081cf644f88392934288086e7662529d0d43277c34f7aad2207cfafb`였다.
-
-```bash
-docker build --platform linux/amd64 \
-  --build-arg NODE_IMAGE=mirror.gcr.io/library/node:24.22.1-bookworm \
-  -t cve-2026-111497-lab:v24.22.1-express \
-  -f lab/v24.22.0/express-body-parser/Dockerfile \
-  lab/v24.22.0/express-body-parser
-
-python3 poc.py \
-  --profile node-24.22.0-express-5.3.0-bookworm-x86_64 \
-  --timeout 30 \
-  --attempts 1
-```
-
-수정 버전은 다음 응답으로 요청을 거부했다.
-
-```text
-HTTP/1.1 400 Bad Request
-ERR ERR__ERROR_FORMAT_BLOCK_SWITCH
-```
-
-그 뒤 `/health`는 계속 `PONG`을 반환했다. 즉 동일 입력에서 RCE 증거가 없었고
-서비스도 중단되지 않았다.
-
-## 실패 지점과 해결
-
-- WSL의 Snap Docker 소켓이 `root:root`로 생성돼 일반 사용자 접근이 거부됐다.
-  사용자나 그룹 구성을 변경하지 않고, WSL root로 Docker CLI만 실행했다.
-- Docker Hub가 익명 manifest 요청에 `429 Too Many Requests`를 반환했다.
-  이미지 버전을 바꾸지 않고 동일 다이제스트를 `mirror.gcr.io`에서 받아 해결했다.
-
-## 방어 권고
-
-- Node.js `22.23.4`, `24.22.1`, `26.12.1` 이상으로 즉시 업그레이드한다.
-- `Content-Encoding: br` 요청 본문을 자동 해제하는 Express/body-parser 경로와,
-  외부 Brotli 응답을 소비하는 `fetch()` 경로를 함께 조사한다.
-- 컨테이너 태그만 보지 말고 실행 중인 Node 바이너리 버전과 해시를 확인한다.
-- 패치 전 임시 방어로 신뢰할 수 없는 Brotli 입력을 제한하되, 이를 런타임
-  업데이트의 대체책으로 취급하지 않는다.
-
-원본 실행 기록은 [evidence/2026-10-23-wsl-docker.txt](evidence/2026-10-23-wsl-docker.txt)에
-요약했다.
+초기 단일 버전 재현 기록은
+[evidence/2026-10-23-wsl-docker.txt](evidence/2026-10-23-wsl-docker.txt), 강화된
+nonce 판정 기록은
+[evidence/2026-10-23-nonce-proof.txt](evidence/2026-10-23-nonce-proof.txt)에
+보존했다.

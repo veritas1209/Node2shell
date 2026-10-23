@@ -1,0 +1,42 @@
+{
+  "calibration": {
+    "accepted_socket_fd": 22,
+    "copy_source_offset": "0x1c8",
+    "observed_destination": "0x7ffff506da08",
+    "observed_source": "0x7fffa0003e20",
+    "ring_base": "0x7fffa0003c10",
+    "saved_return_slot": "0x7ffff508e9c8",
+    "staged_position": "0x5508d5b0",
+    "target_saved_rbp_slot": "0x7ffff508e9c0"
+  },
+  "calibration_token_before_verify": "0f57d23df98247cb8b87a98456cf29b0",
+  "lab_controls": {
+    "cap_drop": "ALL",
+    "no_new_privileges": true,
+    "proof_program": "/n2s (fixed nonce + /usr/bin/id)",
+    "read_only_rootfs": true,
+    "target": "127.0.0.1:3000"
+  },
+  "node_binary_sha256": "c445d85bb8886e15bbc85973134274fb190088233b174841b9999dbabfeef9f8",
+  "observations": [
+    {
+      "attempt": 1,
+      "outcome": "rce-proof",
+      "position": "0x5508d5b0",
+      "proof": true,
+      "response_bytes": 91
+    }
+  ],
+  "official_archive_sha256": "db6342d36ebdb3cbd72103d0ce5ccc528620f6c9df72a11f4ccb384bf1bef678",
+  "official_archive_url": "https://nodejs.org/dist/v26.11.0/node-v26.11.0-linux-x64.tar.xz",
+  "profile": "node-26.11.0-express-5.3.0-bookworm-x86_64-nonce-proof-v4",
+  "proof_channel": "exploited HTTP request socket",
+  "proof_command": "/n2s (fixed nonce + /usr/bin/id)",
+  "proof_marker": "N2S-PROOF:0f57d23df98247cb8b87a98456cf29b0",
+  "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+  "result": "rce-verified",
+  "successful_attempt": 1,
+  "verification_mode": "official-linux-x64-aslr-disabled-isolated-docker",
+  "verified_at": "2026-10-23T16:27:44.135362+00:00",
+  "version": "26.11.0"
+}
