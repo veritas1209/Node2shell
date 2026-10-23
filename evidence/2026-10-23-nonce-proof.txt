@@ -1,0 +1,62 @@
+Node2Shell process-bound nonce proof
+Date: 2026-10-23 Asia/Seoul
+Environment: WSL Ubuntu 24.04, Docker, linux/amd64
+
+Safety boundary
+---------------
+- Target fixed to 127.0.0.1:3000.
+- Container port published on host loopback only.
+- No arbitrary target, command, callback, or reverse-shell option.
+- Fixed /n2s helper prints the current process nonce, then executes /usr/bin/id.
+- Container used read-only rootfs, cap-drop ALL, no-new-privileges, PID/memory/CPU limits.
+
+Vulnerable control
+------------------
+Node: v24.22.0
+Node binary SHA-256: 67ca5783febb8bf85736c79fcdd92c8d6d465a0eb2a082672bcdfa76a506751c
+Image base digest: sha256:925de64a85319052d6971ae81ef2417da956e8a3a2c4a0fac732327970f017f5
+
+attempt=1/16 token=1b5bc372d018a442e3441ad26e02e9c5 position=0x137ed748
+attempt=2/16 token=d65765622629e4f102be96a4766b0221 position=0x137ed748
+attempt=3/16 token=3401d6df1b44bb1ac826258137c1f70d position=0x137ed748
+result=rce-verified
+proof_marker=N2S-PROOF:3401d6df1b44bb1ac826258137c1f70d
+proof_command=/n2s (fixed nonce + /usr/bin/id)
+proof_stdout=uid=1000(node) gid=1000(node) groups=1000(node)
+proof_channel=exploited HTTP request socket
+successful_attempt=3
+
+Independent repeatability batch
+-------------------------------
+A second fresh-container batch produced no nonce-bound proof in 16 attempts.
+The verifier correctly returned result=not-verified with a non-zero exit status.
+This confirms that the nonce change improves proof quality, not the underlying
+ASLR hit rate. The released one-command harness therefore uses a 32-attempt
+default budget and does not treat exhaustion as evidence that a build is safe.
+
+Final one-command harness run
+-----------------------------
+After the 32-attempt default and explicit outcome classification were added,
+`sh lab/run.sh vulnerable` reached rce-verified on attempt 8/32. Attempts 1,
+2, 4, and 7 returned HTTP 400 without proof; attempts 3, 5, and 6 closed or
+crashed without proof. Only attempt 8 returned the matching process nonce and
+fresh id output. The script then removed its labeled lab container.
+
+Patched negative control
+------------------------
+Node: v24.22.1
+Node binary SHA-256: e32e2d16081cf644f88392934288086e7662529d0d43277c34f7aad2207cfafb
+Image base digest: sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
+
+result=patched-control-pass
+proof_observed=false
+decoder_rejected_block_switch=true
+same_process_survived=true
+response=ERR ERR__ERROR_FORMAT_BLOCK_SWITCH
+
+Interpretation
+--------------
+The vulnerable exact profile returned both the nonce obtained from that fresh
+server process and fresh id output through the exploited request socket. Two
+earlier crashes/empty responses were not counted as RCE. The patched build
+rejected the same exploit input and retained the same health nonce.

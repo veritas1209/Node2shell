@@ -1,0 +1,8 @@
+{
+  "name": "node2shell-express-nonce-proof-lab",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "5.3.0"
+  }
+}

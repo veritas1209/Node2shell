@@ -62,4 +62,3 @@ Cleanup
 -------
 Both test containers created for this reproduction were removed.
 The locally cached Docker images were left in place for reproducibility.
-

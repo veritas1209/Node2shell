@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+printf 'N2S-PROOF:%s\n' "${N2S_PROOF:-missing}"
+exec /usr/bin/id

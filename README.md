@@ -25,6 +25,76 @@ Brotli 디코더 취약점인 CVE-2026-111497을 재현했다.
 `id`는 상태를 변경하지 않는 비파괴적 명령이다. 역방향 셸, 파일 생성·삭제,
 권한 상승, 자격 증명 접근 또는 외부 시스템 접속은 수행하지 않았다.
 
+## 개선된 자체 실험 하네스
+
+이 저장소에는 원본 PoC 소스를 복사하지 않고 새로 작성한 loopback 전용 실험
+하네스를 추가했다. 목표는 명령 실행 범위를 넓히는 것이 아니라, Express RCE의
+성공 판정을 더 엄격하고 재현 가능하게 만드는 것이다.
+
+기존 공개 PoC의 Express 체인은 고정된 `/usr/bin/id` 출력만 확인한다. 새 하네스는
+각 Node 프로세스가 시작될 때 128비트 nonce를 만들고 다음 두 경로에서 같은 값을
+사용한다.
+
+1. exploit 전에 `GET /health`로 현재 프로세스의 nonce를 읽는다.
+2. ROP 체인은 임의 명령 대신 고정된 `/n2s`만 실행한다. `/n2s`는 같은 nonce와
+   `/usr/bin/id` 결과를 요청 소켓으로 출력한다.
+
+두 값이 모두 일치해야만 `rce-verified`로 판정한다. 크래시, 빈 응답, 이전
+프로세스의 출력, nonce만 있는 응답 및 `id`만 있는 응답은 모두 실패다. 이번
+실험에서는 첫 두 시도가 무응답으로 실패했고, 세 번째 새 프로세스에서 다음 증거를
+받았다.
+
+```text
+proof_marker=N2S-PROOF:3401d6df1b44bb1ac826258137c1f70d
+proof_stdout=uid=1000(node) gid=1000(node) groups=1000(node)
+proof_channel=exploited HTTP request socket
+successful_attempt=3
+```
+
+같은 입력을 Node.js `24.22.1`에 보낸 음성 대조군은
+`ERR__ERROR_FORMAT_BLOCK_SWITCH`로 거부됐고, nonce가 바뀌지 않아 같은 서버
+프로세스가 계속 정상 동작했음을 확인했다.
+
+### 기존 PoC와의 차이
+
+| 항목 | 기존 Express PoC | 이 저장소의 하네스 |
+| --- | --- | --- |
+| 성공 증거 | 새 `id` 출력 | 현재 프로세스 nonce + 새 `id` 출력 |
+| 실패 판정 | 출력 미관찰 | 크래시·무응답·부분 증거를 각각 실패로 기록 |
+| 패치 대조 | 별도 수동 실행 | 같은 payload의 `--expect patched` 판정 제공 |
+| 대상 | loopback allowlist | `127.0.0.1:3000`으로 코드에 고정 |
+| 실행 명령 | `/usr/bin/id` | 고정 `/n2s`; 임의 명령 인자 없음 |
+| 결과 형식 | 텍스트 | 구조화된 JSON 및 시도별 관찰값 |
+| 컨테이너 | 기본 실행 예시 | read-only, capability 제거, 리소스 제한 |
+| 바이너리 검사 | 프로필에 지문 기록 | 실행 스크립트가 컨테이너 내부 SHA-256 불일치 시 중단 |
+
+### 실행
+
+WSL Ubuntu에서 저장소 루트 기준으로 실행한다. 스크립트는 정확한 이미지
+다이제스트를 빌드하고, Node 바이너리 해시를 검사하며, loopback에만 포트를 연다.
+실험 컨테이너는 종료 시 자동으로 제거한다.
+
+```bash
+chmod +x lab/run.sh
+./lab/run.sh vulnerable
+./lab/run.sh patched
+```
+
+직접 실행할 때도 대상 주소와 명령을 변경하는 옵션은 제공되지 않는다.
+
+```bash
+python3 poc/node2shell_lab.py --attempts 32 --timeout 30
+python3 poc/node2shell_lab.py --expect patched --timeout 30
+```
+
+새 구현의 검증 기록은
+[evidence/2026-10-23-nonce-proof.txt](evidence/2026-10-23-nonce-proof.txt)에 있다.
+이 개선은 성공 증거의 신뢰성과 실험 격리를 강화하지만, ROP 체인의 바이너리별
+가젯, 요청 socket fd `19`, ASLR 위치 추측이라는 기존 정확 프로필 제약은 아직
+제거하지 못했다. 독립 반복에서는 한 배치가 3번째 시도에 성공했지만 다른 16회
+배치는 전부 실패했다. 따라서 기본 예산을 32회로 늘렸으며, `not-verified` 결과는
+패치됨을 뜻하지 않고 이번 ASLR 배치에서 증거를 얻지 못했다는 뜻이다.
+
 ## 정확한 버전 범위
 
 ### 취약점 자체의 공식 범위
@@ -215,4 +285,3 @@ ERR ERR__ERROR_FORMAT_BLOCK_SWITCH
 
 원본 실행 기록은 [evidence/2026-10-23-wsl-docker.txt](evidence/2026-10-23-wsl-docker.txt)에
 요약했다.
-
