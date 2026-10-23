@@ -1,0 +1,24 @@
+{
+  "advisory": "CVE-2026-111497",
+  "tested_at": "2026-10-23",
+  "timezone": "Asia/Seoul",
+  "poc": {
+    "repository": "https://github.com/dimasma0305/CVE-2026-111497-POC",
+    "commit": "e3382551df02b3ac8c925aeeffb9e0d206f052d4",
+    "profile": "node-24.22.0-express-5.3.0-bookworm-x86_64",
+    "trigger_sha256": "b7a6508eb39ef57ae5e3fdf9aa85540071a06eff5d5b5a2d359fc8e1768e4df4"
+  },
+  "vulnerable": {
+    "node_version": "v24.22.0",
+    "image_digest": "sha256:925de64a85319052d6971ae81ef2417da956e8a3a2c4a0fac732327970f017f5",
+    "node_binary_sha256": "67ca5783febb8bf85736c79fcdd92c8d6d465a0eb2a082672bcdfa76a506751c",
+    "package_lock_sha256": "c95ad8783444302c2e80a50d32fd92cfa8443e576bf22f6b1587603c6b546b6c"
+  },
+  "patched": {
+    "node_version": "v24.22.1",
+    "image_digest": "sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a",
+    "node_binary_sha256": "e32e2d16081cf644f88392934288086e7662529d0d43277c34f7aad2207cfafb",
+    "package_lock_sha256": "c95ad8783444302c2e80a50d32fd92cfa8443e576bf22f6b1587603c6b546b6c"
+  }
+}
+
