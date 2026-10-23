@@ -1,0 +1,45 @@
+{
+  "calibration": {
+    "accepted_socket_fd": 19,
+    "copy_source_offset": "0x3e0",
+    "observed_destination": "0x7c36791f0bc0",
+    "observed_source": "0x7c363c003fd8",
+    "ring_base": "0x7c363c003bf8",
+    "saved_return_slot": "0x7c364efbebb8",
+    "staged_position": "0x3d1ef7c8",
+    "steering": "same-request GDB return-state steering; this is not an ASLR bypass",
+    "target_saved_rbp_slot": "0x7c364efbebb0"
+  },
+  "calibration_token_before_verify": "4d290850bc8d87dd91deed115f0a8d46",
+  "lab_controls": {
+    "address_calibration": "same-request GDB return-state steering; this is not an ASLR bypass",
+    "aslr": "enabled",
+    "cap_drop": "ALL",
+    "no_new_privileges": true,
+    "proof_program": "/n2s (fixed nonce + /usr/bin/id)",
+    "read_only_rootfs": true,
+    "target": "127.0.0.1:3000"
+  },
+  "node_binary_sha256": "f7ff2f133dae87d05cbe764bfde1e626a978d5c4c82fd857720848dcac7b0a61",
+  "observations": [
+    {
+      "attempt": 1,
+      "outcome": "rce-proof",
+      "position": "0x3d1ef7c8",
+      "proof": true,
+      "response_bytes": 91
+    }
+  ],
+  "official_archive_sha256": "33429139d4c4416439bf023b2eb2dc257da188fd793b64f21c8c03a0f04a5840",
+  "official_archive_url": "https://nodejs.org/dist/v22.3.0/node-v22.3.0-linux-x64.tar.xz",
+  "profile": "node-22.3.0-express-5.3.0-bookworm-x86_64-nonce-proof-v4",
+  "proof_channel": "exploited HTTP request socket",
+  "proof_command": "/n2s (fixed nonce + /usr/bin/id)",
+  "proof_marker": "N2S-PROOF:4d290850bc8d87dd91deed115f0a8d46",
+  "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+  "result": "rce-verified",
+  "successful_attempt": 1,
+  "verification_mode": "official-linux-x64-aslr-enabled-debugger-steered-isolated-docker",
+  "verified_at": "2026-10-23T17:35:11.309303+00:00",
+  "version": "22.3.0"
+}

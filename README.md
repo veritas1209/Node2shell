@@ -29,18 +29,39 @@ CVE-2026-111497을 WSL Ubuntu 24.04의 로컬 Docker 환경에서 검증한 기�
 `id` 증거는 `evidence/matrix/<version>.json`에 기록했다. 대응하는 정확한
 바이너리 프로필은 `poc/profiles/<version>.json`에 있다.
 
+ASLR을 켠 별도 매트릭스도 같은 공식 84개 릴리스에서 **84/84**를 확인했다.
+전체 집계는
+[evidence/aslr-on-debugger-steered/summary.json](evidence/aslr-on-debugger-steered/summary.json),
+버전별 증거는 `evidence/aslr-on-debugger-steered/<version>.json`에 있다.
+
+| 검증 모드 | ASLR | 결과 | 의미 |
+| --- | --- | ---: | --- |
+| 결정적 direct-overwrite matrix | 꺼짐 | 84/84 | 프로필의 저장 프레임 덮기와 전체 ROP를 그대로 실행 |
+| same-request debugger-steered matrix | 켜짐 (`randomize_va_space=2`) | 84/84 | 현재 요청의 링·프레임을 GDB로 읽고 예상 반환 상태로 전환한 뒤 같은 ROP를 실행 |
+
+두 번째 결과는 ASLR이 활성화된 실제 주소 배치에서 고정 `/n2s` ROP 체인과 증명
+채널이 모든 버전에서 동작함을 확인한 것이다. 다만 GDB가 취약 복사 직전 현재
+요청의 주소를 읽고 반환 레지스터 상태를 보정하므로 **주소 누출 없는 ASLR 우회나
+네트워크 단독 exploit을 뜻하지 않는다.** `24.22.0`에서는 별도로 GDB와 주소
+누출 없이 상대 피벗 체인이 14번째 요청에서 성공했지만, 이 확률적 단일 버전
+실험을 84개 전체 결과로 일반화하지 않았다. 해당 기록은
+[evidence/aslr-on-network-only-24.22.0.json](evidence/aslr-on-network-only-24.22.0.json)에
+분리했다.
+
 이 84/84 결과의 범위는 다음 조건으로 한정된다.
 
 - Node.js 공식 `node-v<version>-linux-x64.tar.xz` 바이너리
 - Express `5.3.0`, body-parser `2.4.0`, Debian bookworm 사용자 공간
 - `UV_THREADPOOL_SIZE=1`
-- ASLR을 끈 재현 전용 컨테이너와 버전별 읽기 전용 GDB 보정
+- direct-overwrite 매트릭스는 ASLR을 끈 재현 전용 컨테이너와 버전별 GDB 보정
+- ASLR 매트릭스는 `N2S_DISABLE_ASLR` 없이 `randomize_va_space=2`를 유지하고,
+  취약 복사 직전 같은 요청의 반환 상태를 GDB로 보정
 - loopback의 `127.0.0.1:3000`만 사용하는 고정 실험 앱
 
-따라서 다른 운영체제, CPU 아키텍처, 배포판 재빌드 또는 ASLR이 켜진 운영 환경에
-그대로 일반화한 결과는 아니다. 여기서 ASLR을 끈 이유는 공식 바이너리별 exploit
-체인을 결정적으로 검증하기 위해서이며, 운영 환경용 우회 기법을 구현하려는 것이
-아니다.
+따라서 다른 운영체제, CPU 아키텍처 또는 배포판 재빌드에 그대로 일반화한 결과는
+아니다. ASLR-off 결과는 공식 바이너리별 exploit 체인을 결정적으로 검증하기 위한
+것이고, ASLR-on 결과는 디버거 보조 검증이다. 둘 다 운영 환경용 ASLR 우회 기법을
+구현했다는 주장은 아니다.
 
 ## 공식 취약 버전 범위
 
@@ -88,6 +109,7 @@ Node.js 공식 권고는 CVE-2026-111497이 22.x, 24.x, 26.x에 영향을 준다
 | 실행 프로그램 | 고정 `id` | 고정 `/n2s`; 임의 명령·경로 인수 없음 |
 | 바이너리 확인 | 개별 프로필 지문 | 공식 SHASUMS256와 추출 바이너리 SHA-256 모두 확인 |
 | 주소·FD 처리 | 고정 값 또는 추측 | 버전별 GDB 보정과 요청 socket FD 자동 탐지 |
+| ASLR 결과 구분 | 조건이 불명확할 수 있음 | ASLR-off direct와 ASLR-on debugger-steered 증거를 별도 보관 |
 | 실패 판정 | 출력 미관찰 | 크래시·무응답·부분 증거·누락 증거를 분리 기록 |
 | 격리 | 기본 컨테이너 | read-only rootfs, capability 제거, no-new-privileges, 리소스 제한 |
 
@@ -136,12 +158,18 @@ chmod +x lab/run.sh
 ```bash
 sudo -E python3 tools/verify_release_matrix.py
 sudo -E python3 tools/verify_release_matrix.py --version 22.0.0 --include-verified
+sudo -E python3 tools/verify_release_matrix.py --aslr debugger-steered
 ```
 
 runner는 공식 배포 인덱스와 각 릴리스의 `SHASUMS256.txt`를 받고, 해당 버전의
 `bin/node`만 임시로 추출한다. 정적 프로필 생성, 읽기 전용 GDB 보정, 격리 Docker
 검증 뒤 임시 바이너리는 삭제하고 프로필과 JSON 증거만 남긴다. 이미
 `rce-verified`인 버전은 기본적으로 건너뛴다.
+
+`--aslr debugger-steered`는 ASLR을 끄는 환경 변수를 넣지 않는다. GDB가 현재
+요청의 취약 저장 지점에서 링과 저장 프레임을 관찰하고, v4 체인이 만들 반환
+상태로 전환한 뒤 분리된다. 따라서 이 모드는 방어 검증과 버전 회귀 확인용이며,
+ASLR 우회 PoC로 해석해서는 안 된다.
 
 단위 테스트는 다음과 같다.
 
@@ -156,6 +184,7 @@ python3 -m unittest discover -s tests -v
 - `tools/verify_release_matrix.py`: 공식 범위 산출, 해시 검증, 보정 및 84개 matrix 실행
 - `poc/profiles/`: 버전별 통합 v4 프로필 84개
 - `evidence/matrix/`: 버전별 검증 증거와 전체 요약
+- `evidence/aslr-on-debugger-steered/`: ASLR 활성·GDB 보조 버전별 증거와 전체 요약
 - `lab/express-nonce-proof/`: Express 앱, 고정 `/n2s`, 감독 루프와 Dockerfile
 - `lab/run.sh`: `24.22.0` 취약/`24.22.1` 수정 대조군 실행기
 

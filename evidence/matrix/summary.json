@@ -1,7 +1,7 @@
 {
   "complete": true,
   "failed_or_unverified": {},
-  "generated_at": "2026-10-23T16:35:56.692073+00:00",
+  "generated_at": "2026-10-23T17:56:53.292842+00:00",
   "official_affected_linux_x64_release_count": 84,
   "rce_verified_count": 84,
   "rce_verified_versions": [
@@ -89,5 +89,6 @@
     "26.11.0",
     "26.11.1",
     "26.12.0"
-  ]
+  ],
+  "verification_mode": "official-linux-x64-aslr-disabled-isolated-docker"
 }

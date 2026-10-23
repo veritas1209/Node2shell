@@ -1,0 +1,18 @@
+{
+  "accepted_socket_fd": 19,
+  "address_leak_used": false,
+  "attempt_budget": 64,
+  "debugger_used_during_exploit": false,
+  "node_binary_sha256": "67ca5783febb8bf85736c79fcdd92c8d6d465a0eb2a082672bcdfa76a506751c",
+  "notes": "Experimental position-independent legacy chain; this single-version probabilistic result is not the 84-version ASLR matrix.",
+  "profile": "node-24.22.0-aslr-on-position-independent-probe",
+  "proof_channel": "exploited HTTP request socket",
+  "proof_command": "/n2s (fixed nonce + /usr/bin/id)",
+  "proof_marker": "N2S-PROOF:7228265dbdfc18d6671a90db84adfaca",
+  "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+  "result": "rce-verified",
+  "successful_attempt": 14,
+  "target": "127.0.0.1:3000",
+  "version": "24.22.0",
+  "verification_mode": "official-linux-x64-aslr-enabled-network-only-no-address-leak-probabilistic"
+}

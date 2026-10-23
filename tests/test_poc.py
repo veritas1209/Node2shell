@@ -84,6 +84,47 @@ class PocTests(unittest.TestCase):
         self.assertEqual(summary["rce_verified_count"], 84)
         self.assertEqual(summary["failed_or_unverified"], {})
 
+    def test_aslr_debugger_steered_evidence_is_complete_and_explicit(self):
+        direct_dir = ROOT / "evidence" / "matrix"
+        aslr_dir = ROOT / "evidence" / "aslr-on-debugger-steered"
+        direct_paths = sorted(
+            path for path in direct_dir.glob("*.json") if path.name != "summary.json"
+        )
+        aslr_paths = sorted(
+            path for path in aslr_dir.glob("*.json") if path.name != "summary.json"
+        )
+        self.assertEqual(len(aslr_paths), 84)
+        self.assertEqual(
+            [path.stem for path in aslr_paths],
+            [path.stem for path in direct_paths],
+        )
+        for direct_path, aslr_path in zip(direct_paths, aslr_paths):
+            direct = json.loads(direct_path.read_text(encoding="utf-8"))
+            aslr = json.loads(aslr_path.read_text(encoding="utf-8"))
+            self.assertEqual(aslr["version"], aslr_path.stem)
+            self.assertEqual(aslr["result"], "rce-verified", aslr_path.name)
+            self.assertEqual(aslr["node_binary_sha256"], direct["node_binary_sha256"])
+            self.assertEqual(
+                aslr["verification_mode"],
+                "official-linux-x64-aslr-enabled-debugger-steered-isolated-docker",
+            )
+            self.assertEqual(aslr["lab_controls"]["aslr"], "enabled")
+            self.assertIn("not an ASLR bypass", aslr["calibration"]["steering"])
+            self.assertEqual(
+                aslr["proof_marker"],
+                "N2S-PROOF:" + aslr["calibration_token_before_verify"],
+            )
+            self.assertRegex(aslr["proof_stdout"], r"^uid=\d+")
+
+        summary = json.loads((aslr_dir / "summary.json").read_text(encoding="utf-8"))
+        self.assertTrue(summary["complete"])
+        self.assertEqual(summary["rce_verified_count"], 84)
+        self.assertEqual(summary["failed_or_unverified"], {})
+        self.assertEqual(
+            summary["verification_mode"],
+            "official-linux-x64-aslr-enabled-debugger-steered-isolated-docker",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

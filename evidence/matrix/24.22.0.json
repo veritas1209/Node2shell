@@ -9,8 +9,10 @@
     "staged_position": "0x550e0740",
     "target_saved_rbp_slot": "0x7ffff50e1b50"
   },
-  "calibration_token_before_verify": "8877bad1cc428e6231cf366a6c5c6dff",
+  "calibration_token_before_verify": "7e55b730893ffd4c287c6a0e5d146720",
   "lab_controls": {
+    "address_calibration": "same-process GDB with ASLR disabled",
+    "aslr": "disabled",
     "cap_drop": "ALL",
     "no_new_privileges": true,
     "proof_program": "/n2s (fixed nonce + /usr/bin/id)",
@@ -32,11 +34,11 @@
   "profile": "node-24.22.0-express-5.3.0-bookworm-x86_64-nonce-proof-v4",
   "proof_channel": "exploited HTTP request socket",
   "proof_command": "/n2s (fixed nonce + /usr/bin/id)",
-  "proof_marker": "N2S-PROOF:8877bad1cc428e6231cf366a6c5c6dff",
+  "proof_marker": "N2S-PROOF:7e55b730893ffd4c287c6a0e5d146720",
   "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
   "result": "rce-verified",
   "successful_attempt": 1,
   "verification_mode": "official-linux-x64-aslr-disabled-isolated-docker",
-  "verified_at": "2026-10-23T16:30:10.334105+00:00",
+  "verified_at": "2026-10-23T17:56:52.758183+00:00",
   "version": "24.22.0"
 }
