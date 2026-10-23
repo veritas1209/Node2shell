@@ -1,0 +1,65 @@
+Node2Shell / CVE-2026-111497 controlled reproduction
+Date: 2026-10-23 Asia/Seoul
+Host lab: WSL Ubuntu 24.04, Linux x86_64, Docker Engine 29.8.0
+
+Safety boundary
+---------------
+- Target bound only to 127.0.0.1:3000.
+- Public PoC statically reviewed before execution.
+- Target host allowlist: 127.0.0.1, ::1, localhost.
+- Fixed proof command: /usr/bin/id.
+- No reverse shell, persistence, credential access, file modification, or external target.
+
+Source identity
+---------------
+Repository: https://github.com/dimasma0305/CVE-2026-111497-POC
+Commit: e3382551df02b3ac8c925aeeffb9e0d206f052d4
+Profile: node-24.22.0-express-5.3.0-bookworm-x86_64
+Trigger SHA-256: b7a6508eb39ef57ae5e3fdf9aa85540071a06eff5d5b5a2d359fc8e1768e4df4
+
+Vulnerable image fingerprint
+----------------------------
+Base OCI digest: sha256:925de64a85319052d6971ae81ef2417da956e8a3a2c4a0fac732327970f017f5
+Node version: v24.22.0
+Node binary SHA-256: 67ca5783febb8bf85736c79fcdd92c8d6d465a0eb2a082672bcdfa76a506751c
+package-lock SHA-256: c95ad8783444302c2e80a50d32fd92cfa8443e576bf22f6b1587603c6b546b6c
+Express: 5.3.0
+body-parser: 2.4.0
+
+Observed vulnerable result
+--------------------------
+attempt=1/16 staged_position=0x137ed748
+PASS: RCE verified by fresh id output through the declared interface
+profile=node-24.22.0-express-5.3.0-bookworm-x86_64
+proof_channel=HTTP request socket stdout
+proof_command=id
+proof_stdout=uid=1000(node) gid=1000(node) groups=1000(node)
+successful_attempt=1
+
+Patched image fingerprint
+-------------------------
+Base OCI digest: sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
+Node version: v24.22.1
+Node binary SHA-256: e32e2d16081cf644f88392934288086e7662529d0d43277c34f7aad2207cfafb
+package-lock SHA-256: c95ad8783444302c2e80a50d32fd92cfa8443e576bf22f6b1587603c6b546b6c
+
+Observed patched result
+-----------------------
+attempt=1/1 staged_position=0x137ed748
+FAIL: fresh id output was not observed after 1 attempts
+HTTP/1.1 400 Bad Request
+ERR ERR__ERROR_FORMAT_BLOCK_SWITCH
+postcondition: GET /health returned PONG; container remained running.
+
+Environment blockers and bounded fixes
+---------------------------------------
+1. Docker socket was root:root and the WSL user had no direct access.
+   Used WSL root only for Docker CLI operations; no group or account changes.
+2. Docker Hub returned HTTP 429 while resolving the pinned image.
+   Pulled the same OCI digest from mirror.gcr.io and verified the binary hash.
+
+Cleanup
+-------
+Both test containers created for this reproduction were removed.
+The locally cached Docker images were left in place for reproducibility.
+
