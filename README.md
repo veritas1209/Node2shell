@@ -358,4 +358,3 @@ python3 -m unittest discover -s tests -v
 nonce 판정 기록은
 [evidence/2026-10-23-nonce-proof.txt](evidence/2026-10-23-nonce-proof.txt)에
 보존했다.
-

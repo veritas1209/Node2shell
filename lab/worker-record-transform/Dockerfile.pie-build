@@ -27,4 +27,3 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/node-v24.22.0/out/Release/node /usr/local/bin/node-pie
 ENTRYPOINT ["/usr/local/bin/node-pie"]
-
