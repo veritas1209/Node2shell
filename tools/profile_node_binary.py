@@ -192,8 +192,11 @@ def text_symbol_address(path: Path, name: str) -> int | None:
 
 def extract(path: Path) -> dict[str, object]:
     elf = Elf64(path)
-    if elf.e_type != 2:
-        raise ElfError("the constrained lab requires a non-PIE ET_EXEC Node binary")
+    elf_types = {2: "ET_EXEC", 3: "ET_DYN"}
+    if elf.e_type not in elf_types:
+        raise ElfError(
+            "the constrained lab requires an ELF64 ET_EXEC or ET_DYN Node binary"
+        )
 
     patterns = {
         "mov_rax_rdi_ret": bytes.fromhex("4889f8c3"),
@@ -380,6 +383,9 @@ def extract(path: Path) -> dict[str, object]:
             "r8+rax",
             "r8",
         ),
+        # PIE builds can use r13 for BrotliDecoderState and materialize both
+        # source and destination before the 16-byte copy.
+        (bytes.fromhex("f30f6f060f1107"), 4, "rsi", "rdi", "r13+0x88"),
     )
     copy_sites: list[tuple[int, str, str, str]] = []
     for pattern, store_offset, source_register, destination_expression, ring_expression in copy_forms:
@@ -435,7 +441,7 @@ def extract(path: Path) -> dict[str, object]:
     profile = {
         "node_binary": str(path.resolve()),
         "node_binary_sha256": hashlib.sha256(elf.data).hexdigest(),
-        "elf_type": "ET_EXEC",
+        "elf_type": elf_types[elf.e_type],
         **{name: f"0x{address:x}" for name, address in selected.items()},
         "dup2_plt": f"0x{dup2_plt:x}",
         "execvp_plt": f"0x{execvp_plt:x}",

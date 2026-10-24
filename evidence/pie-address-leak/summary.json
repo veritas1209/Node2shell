@@ -1,5 +1,5 @@
 {
-  "result": "pie-address-leak-feasible-rce-not-yet-verified",
+  "result": "pie-network-only-rce-verified",
   "version": "24.22.0",
   "source_archive_sha256": "41f97cff2c666f1f8293dc5f85c65e8dd605c16b43fd9febd49ede32ee1e0329",
   "node_binary_sha256": "93102becef36fbf01564e5af4e3a62cea0f6ee08d331db78a994b36bc7b490b2",
@@ -13,57 +13,59 @@
     "survey_trials": 100
   },
   "address_leak": {
-    "result": "usable-node-image-leak-observed",
+    "result": "deterministic-lab-image-leak-observed",
     "source": "bundled app Buffer.allocUnsafeSlow partial-copy response",
-    "split_stream_stable_candidate": {
-      "record_offset": "0x68",
-      "node_image_offset": "0x3cb2b1a",
+    "dedicated_lane_candidate": {
+      "record_size": "0x330",
+      "record_offset": "0xa0",
+      "node_image_offset": "0x6a57ae0",
       "permissions": "r--p",
-      "trials_observed": 5
-    },
-    "cve_groom_stable_candidate": {
-      "record_index": 0,
-      "record_offset": "0x320",
-      "node_image_offset": "0x3a42bb8",
-      "permissions": "r--p",
-      "trials_observed": 2
+      "trials_observed": 20,
+      "trials_total": 20
     },
     "derived_base_matched_maps_oracle_in_diagnostic": true,
     "not_intrinsic_to_cve": true
   },
   "chain_results": {
-    "unrelocated_static_offsets": {
-      "rce_verified": 0,
-      "attempts": 7
-    },
     "network_leak_relocated": {
-      "containers": 20,
-      "load_bias_recovered_within_8_probes": 13,
-      "rce_verified": 0,
+      "result": "rce-verified",
+      "containers_used": 1,
+      "leak_attempts": 1,
+      "proof_command": "/usr/bin/id (fixed)",
+      "proof_stdout": "uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu)",
       "debugger_used": false,
-      "runtime_address_read_used": false
+      "runtime_address_read_used": false,
+      "ld_preload_used": false
     },
-    "maps_oracle_relocated_clean_control": {
-      "rce_verified": 0,
-      "attempts": 3,
-      "runtime_address_read_used": true
-    },
-    "remaining_blocker": "the source-built PIE binary needs a new worker-heap relative layout; address relocation alone is insufficient"
+    "development_calibration": {
+      "debugger_used": true,
+      "proof_eligible": false,
+      "purpose": "distinguish libuv-worker and WorkerThread tcache arenas and derive relative candidates"
+    }
   },
+  "exploit_logic_improvements": [
+    "preserve the v24 poison source pair at ring+0x77 while carrying the fixed proof block",
+    "select the PIE record size and candidate set by exact Node binary SHA-256",
+    "cycle calibrated signed 32-bit relative-write candidates across fresh containers",
+    "derive the PIE load bias only from the held loopback leak response"
+  ],
   "reverse_engineering": {
     "rea_attempted": true,
     "rea_result": "capability_unavailable",
     "rea_limitation": "the installed offline ELF provider supports Linux x64 hosts, while this REA server is on Windows",
-    "fallback": "readelf, file, nm and objdump in WSL Ubuntu"
+    "fallback": "readelf, file, nm, objdump and development-only GDB in WSL Ubuntu"
   },
   "evidence": {
     "survey": "evidence/pie-address-leak/24.22.0.json",
+    "deterministic_leak_lane": "evidence/pie-address-leak/leak-lane-survey-24.22.0.json",
+    "heap_calibration": "evidence/pie-address-leak/heap-calibration-24.22.0.json",
     "network_relocated_chain": "evidence/pie-address-leak/relocated-chain-24.22.0.json",
-    "oracle_control": "evidence/pie-address-leak/oracle-control-24.22.0.json"
+    "historical_oracle_control": "evidence/pie-address-leak/oracle-control-24.22.0.json"
   },
   "limitations": [
     "The address leak is specific to the bundled lab application's partial-copy behavior and is not a general property of CVE-2026-111497.",
-    "The 100-trial maps oracle classified captured values but was not used by the network-only relocated-chain run.",
-    "No PIE RCE is claimed until a matching heap layout produces the fixed /usr/bin/id callback proof."
+    "The verified PIE profile is limited to the exact source-built Node 24.22.0 binary SHA-256 and Ubuntu 24.04 glibc x86-64 layout.",
+    "The calibrated heap candidate set is sensitive to application allocation order, worker lifecycle and allocator changes.",
+    "The final RCE proof used no debugger or runtime address oracle; GDB was used only in separate, proof-ineligible development calibration."
   ]
 }

@@ -41,6 +41,7 @@ ASLR을 켜고 GDB나 런타임 주소 읽기 없이 수행한 별도 매트릭�
 | 결정적 direct-overwrite matrix | 꺼짐 | 84/84 | 프로필의 저장 프레임 덮기와 전체 ROP를 그대로 실행 |
 | worker-heap network-only matrix | 켜짐 (`randomize_va_space=2`) | **84/84** | GDB·주소 읽기·`LD_PRELOAD` 없이 loopback 입력만으로 고정 `id` callback 확인 |
 | same-request debugger-steered matrix | 켜짐 (`randomize_va_space=2`) | 84/84 | 개발 이력: 현재 요청의 링·프레임을 GDB로 읽어 direct ROP 체인을 검증 |
+| source-built PIE 24.22.0 | 켜짐 (`randomize_va_space=2`) | **RCE 확인** | 앱 수준 주소 누출로 PIE를 재배치한 뒤, GDB·maps·`LD_PRELOAD` 없이 고정 `id` callback 확인 |
 
 worker-heap 결과는 취약한 Brotli ring과 같은 worker arena 안의 glibc tcache entry
 사이에 일정한 상대 거리를 사용한다. 공식 Node 바이너리는 non-PIE이므로 ICU
@@ -84,7 +85,7 @@ CA 인증서만 더한 `Dockerfile.runtime`으로 만들었다. `libatomic1`은 
 바이너리의 런타임 의존성이다. 모든 시나리오는 ASLR=2를 유지하고 GDB, 런타임
 주소 읽기 및 `LD_PRELOAD`를 사용하지 않았다.
 
-### PIE 빌드와 주소 누출 조사
+### PIE 빌드와 network-only RCE
 
 공식 Linux x64 Node 바이너리의 non-PIE 전제에서 벗어나기 위해 공식
 `node-v24.22.0.tar.xz`를 SHA-256으로 검증하고 `-fPIE`/`-pie`로 다시 빌드했다.
@@ -92,27 +93,33 @@ CA 인증서만 더한 `Dockerfile.runtime`으로 만들었다. `libatomic1`은 
 `93102becef36fbf01564e5af4e3a62cea0f6ee08d331db78a994b36bc7b490b2`다. ASLR을
 켠 fresh 컨테이너 100개의 로드 베이스가 모두 달랐다.
 
-100회 네트워크 응답을 캡처한 뒤에만 `/proc/1/maps`를 판정 오라클로 대조한 결과,
-번들 앱의 `Buffer.allocUnsafeSlow` partial-copy tail에서 같은 Node 이미지 상대
-포인터가 5/100회 재현됐다. 응답 record의 `0x68` 위치 값에서 알려진 이미지
-offset `0x3cb2b1a`를 빼면 page-aligned PIE load bias가 된다. CVE grooming 출력에서도
-첫 record `0x320` 위치의 이미지 offset `0x3a42bb8`이 같은 위치에서 2/100회
-재현됐다. 별도 진단 1회에서 네트워크로 계산한 load bias가 maps 오라클과 정확히
+초기 100회 survey에서는 기본 partial-copy 응답의 이미지 포인터가 `0x68`에서
+5/100회 관찰됐다. 이후 주소 누출과 exploit heap을 분리한 전용 loopback lane을
+추가했다. 이 lane은 `0x330` record를 할당하기 전에 `Intl.DateTimeFormat`을 실행하며,
+응답 `0xa0`의 값에서 알려진 이미지 offset `0x6a57ae0`을 빼서 load bias를 구한다.
+fresh 컨테이너 20회에서 이 후보가 **20/20** 재현됐고, 별도 진단에서 maps 오라클과
 일치했다.
 
-이로써 **이 번들 앱에서는 PIE 주소 누출 가능성까지 확인**했다. 다만 이는
-CVE 자체의 read primitive가 아니라 앱이 짧은 chunk를 초기화하지 않은 record
-전체로 복사해 반환하는 별도 동작에 의존한다. 임의 Node 서비스에 적용되는 보편적
-PIE 우회가 아니다.
+exploit lane은 `0x200` record와 tcache bin 31을 사용한다. 개발 보정에서 취약 copy가
+`libuv-worker`에서 실행되는 반면 record allocation은 별도 `WorkerThread` tcache를
+소비한다는 점을 확인했다. 누출·groom·exploit 워커 생성 순서에 따라 glibc arena가
+달라지므로, 정확한 바이너리 SHA-256에 결합한 네 개의 signed relative-write 후보를
+fresh 컨테이너마다 순환한다. 또한 512바이트 proof block을 넣어도 poison source인
+ring `+0x77`에 BSS 포인터 쌍이 남도록 `stage_one`을 수정했다.
 
-누출 주소를 실제 요청에 넣지 않은 조사와 별도로, maps·GDB 없이 네트워크 누출만으로
-주소를 보정하는 체인도 실행했다. 20개 fresh 컨테이너 중 13개에서 최대 8회의
-benign probe 안에 load bias를 복구했지만 고정 `/usr/bin/id` RCE는 0/13이었다.
-maps로 주소를 즉시 보정하고 누출 전 heap 교란을 제거한 대조군도 0/3이므로, 현재
-남은 blocker는 PIE 주소가 아니라 **source-built 바이너리에 맞는 새 worker-heap
-상대 layout**이다. 따라서 이 단계에서는 PIE RCE를 주장하지 않는다. 상세 집계는
-[evidence/pie-address-leak/summary.json](evidence/pie-address-leak/summary.json)에
-있다.
+최종 검증은 첫 fresh 컨테이너에서 네트워크 누출 1회로 load bias를 계산한 뒤
+고정 `/usr/bin/id` callback에 성공했다. `randomize_va_space=2`였고 GDB,
+`/proc/*/maps`, core dump, `LD_PRELOAD` 또는 다른 런타임 주소 오라클은 사용하지
+않았다. 결과는
+[evidence/pie-address-leak/relocated-chain-24.22.0.json](evidence/pie-address-leak/relocated-chain-24.22.0.json),
+개발 보정과 누출 안정성은
+[evidence/pie-address-leak/summary.json](evidence/pie-address-leak/summary.json)에 있다.
+
+다만 이 주소 누출은 CVE 자체의 read primitive가 아니라 번들 앱이 초기화하지 않은
+record tail을 반환하는 동작에 의존한다. 검증된 PIE 프로필도 위 정확한 Node
+24.22.0 빌드, Ubuntu 24.04 glibc x86-64, 워커 생성 순서에 한정된다. 임의 Node
+서비스에 적용되는 보편적 PIE/ASLR 우회를 주장하지 않는다. GDB는 후보 도출용
+개발 보정에서만 사용했고 그 결과는 최종 RCE 증거로 취급하지 않는다.
 
 이 84/84 결과의 범위는 다음 조건으로 한정된다.
 
@@ -129,6 +136,8 @@ maps로 주소를 즉시 보정하고 누출 전 heap 교란을 제거한 대조
 - loopback의 `127.0.0.1:3000`만 사용하는 고정 실험 앱
 - Debian/Ubuntu 시나리오 결과는 major별 대표 릴리스 3개에 한정되며 84개 전부에
   대해 6개 구성을 반복했다는 의미는 아님
+- PIE RCE는 source-built 24.22.0의 정확한 바이너리 SHA-256, Ubuntu 24.04 glibc,
+  번들 앱의 전용 partial-copy leak lane과 고정 워커 순서에 한정
 
 따라서 다른 운영체제, CPU 아키텍처 또는 배포판 재빌드에 그대로 일반화한 결과는
 아니다. ASLR-off 결과는 공식 바이너리별 direct ROP를 결정적으로 검증하기 위한
@@ -299,13 +308,14 @@ sudo -E python3 tools/investigate_pie_leak.py \
 
 sudo -E python3 tools/investigate_pie_leak.py \
   --node-binary ./node-pie-24.22.0 --relocated-only \
-  --leak-attempt-limit 8 --container-attempt-limit 20 \
+  --leak-attempt-limit 1 --container-attempt-limit 16 \
   --output evidence/pie-address-leak/relocated-chain-24.22.0.json
 ```
 
 첫 명령은 캡처가 끝난 뒤 maps를 판정 오라클로 읽는 feasibility survey다. 두 번째
-명령은 maps·debugger·`LD_PRELOAD` 없이 네트워크 응답에서만 load bias를 계산하고,
-고정 `/usr/bin/id` 체인만 시도한다. 외부 target·callback·명령 옵션은 없다.
+명령은 정확한 바이너리 SHA-256으로 `0x200` 레이아웃과 보정 후보를 자동 선택한다.
+maps·debugger·`LD_PRELOAD` 없이 네트워크 응답에서만 load bias를 계산하고, 고정
+`/usr/bin/id` 체인만 시도한다. 외부 target·callback·명령 옵션은 없다.
 
 runner는 공식 배포 인덱스와 각 릴리스의 `SHASUMS256.txt`를 받고, 해당 버전의
 `bin/node`만 임시로 추출한다. 정적 프로필 생성, 읽기 전용 GDB 보정, 격리 Docker
@@ -333,6 +343,7 @@ python3 -m unittest discover -s tests -v
 - `poc/heap_layout_selector.py`: 검증된 바이너리 지문 기반 heap layout 선택기
 - `tools/verify_runtime_scenarios.py`: Debian/Ubuntu 서비스·noise·동시성 반복 검증기
 - `tools/investigate_pie_leak.py`: PIE 누출 survey와 network-only 재배치 체인 검증기
+- `tools/calibrate_pie_heap.py`: proof에 사용할 수 없는 개발 전용 PIE worker/tcache 보정기
 - `poc/profiles/`: 버전별 통합 v4 프로필 84개
 - `evidence/matrix/`: 버전별 검증 증거와 전체 요약
 - `evidence/aslr-on-debugger-steered/`: ASLR 활성·GDB 보조 버전별 증거와 전체 요약

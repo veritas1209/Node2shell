@@ -1,0 +1,31 @@
+{
+  "result": "development-only-relative-layout-calibration",
+  "binary_sha256": "93102becef36fbf01564e5af4e3a62cea0f6ee08d331db78a994b36bc7b490b2",
+  "node_version": "24.22.0",
+  "proof_eligible": false,
+  "debugger_used": true,
+  "runtime_address_read_used": true,
+  "observations": {
+    "sequence": "held 0x330 leak worker, held groom worker, then 0x200 exploit worker",
+    "record_size": "0x200",
+    "tcache_index": 31,
+    "ring_from_arena": "0xe200",
+    "poison_source_from_ring": "0x77",
+    "trial_count": 13,
+    "relative_position_frequencies": {
+      "-0x2800d7a8": 7,
+      "-0x400d7a8": 3,
+      "-0x5000d7a8": 1,
+      "-0x5400d7a8": 2
+    }
+  },
+  "inferences": [
+    "The vulnerable copy runs on the libuv-worker arena while Buffer.allocUnsafeSlow consumes the exploit WorkerThread tcache.",
+    "A single heap-relative constant is insufficient once the held leak worker changes glibc arena assignment.",
+    "The proof payload must preserve the target pointer pair at ring+0x77; moving all pairs beyond the 512-byte proof block writes zero into the tcache head."
+  ],
+  "unknowns": [
+    "The candidate distribution is not claimed to generalize beyond this exact binary, application order, glibc and container image.",
+    "Allocator or scheduler changes may introduce additional relative candidates."
+  ]
+}

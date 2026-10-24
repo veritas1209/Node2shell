@@ -1,0 +1,21 @@
+{
+  "result": "stable-node-image-leak-observed",
+  "binary_sha256": "93102becef36fbf01564e5af4e3a62cea0f6ee08d331db78a994b36bc7b490b2",
+  "node_version": "24.22.0",
+  "record_size": "0x330",
+  "trial_count": 20,
+  "stable_candidate": {
+    "record_offset": "0xa0",
+    "image_offset": "0x6a57ae0",
+    "permissions": "r--p",
+    "trials_observed": 20
+  },
+  "method": {
+    "lane": "127.0.0.1:3001",
+    "preformat_before_record": true,
+    "debugger_used": false,
+    "oracle_address_fed_to_request": false,
+    "classification_oracle": "/proc/1/maps read only after each capture"
+  },
+  "limitation": "This is an application-level uninitialized-tail disclosure in the bundled lab, not a CVE-intrinsic read primitive."
+}
