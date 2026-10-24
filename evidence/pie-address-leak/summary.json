@@ -1,0 +1,70 @@
+{
+  "result": "pie-address-leak-feasible-rce-not-yet-verified",
+  "version": "24.22.0",
+  "source_archive_sha256": "41f97cff2c666f1f8293dc5f85c65e8dd605c16b43fd9febd49ede32ee1e0329",
+  "node_binary_sha256": "93102becef36fbf01564e5af4e3a62cea0f6ee08d331db78a994b36bc7b490b2",
+  "binary_properties": {
+    "elf_type": "ET_DYN",
+    "architecture": "x86-64",
+    "nx_stack": true,
+    "full_relro": true,
+    "aslr": "randomize_va_space=2",
+    "distinct_load_biases": 100,
+    "survey_trials": 100
+  },
+  "address_leak": {
+    "result": "usable-node-image-leak-observed",
+    "source": "bundled app Buffer.allocUnsafeSlow partial-copy response",
+    "split_stream_stable_candidate": {
+      "record_offset": "0x68",
+      "node_image_offset": "0x3cb2b1a",
+      "permissions": "r--p",
+      "trials_observed": 5
+    },
+    "cve_groom_stable_candidate": {
+      "record_index": 0,
+      "record_offset": "0x320",
+      "node_image_offset": "0x3a42bb8",
+      "permissions": "r--p",
+      "trials_observed": 2
+    },
+    "derived_base_matched_maps_oracle_in_diagnostic": true,
+    "not_intrinsic_to_cve": true
+  },
+  "chain_results": {
+    "unrelocated_static_offsets": {
+      "rce_verified": 0,
+      "attempts": 7
+    },
+    "network_leak_relocated": {
+      "containers": 20,
+      "load_bias_recovered_within_8_probes": 13,
+      "rce_verified": 0,
+      "debugger_used": false,
+      "runtime_address_read_used": false
+    },
+    "maps_oracle_relocated_clean_control": {
+      "rce_verified": 0,
+      "attempts": 3,
+      "runtime_address_read_used": true
+    },
+    "remaining_blocker": "the source-built PIE binary needs a new worker-heap relative layout; address relocation alone is insufficient"
+  },
+  "reverse_engineering": {
+    "rea_attempted": true,
+    "rea_result": "capability_unavailable",
+    "rea_limitation": "the installed offline ELF provider supports Linux x64 hosts, while this REA server is on Windows",
+    "fallback": "readelf, file, nm and objdump in WSL Ubuntu"
+  },
+  "evidence": {
+    "survey": "evidence/pie-address-leak/24.22.0.json",
+    "network_relocated_chain": "evidence/pie-address-leak/relocated-chain-24.22.0.json",
+    "oracle_control": "evidence/pie-address-leak/oracle-control-24.22.0.json"
+  },
+  "limitations": [
+    "The address leak is specific to the bundled lab application's partial-copy behavior and is not a general property of CVE-2026-111497.",
+    "The 100-trial maps oracle classified captured values but was not used by the network-only relocated-chain run.",
+    "No PIE RCE is claimed until a matching heap layout produces the fixed /usr/bin/id callback proof."
+  ]
+}
+

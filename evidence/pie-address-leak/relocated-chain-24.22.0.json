@@ -1,0 +1,205 @@
+{
+  "binary": {
+    "elf_type": "ET_DYN",
+    "node_binary_sha256": "93102becef36fbf01564e5af4e3a62cea0f6ee08d331db78a994b36bc7b490b2",
+    "node_version": "v24.22.0"
+  },
+  "generated_at": "2026-10-24T07:16:08.917466+00:00",
+  "leak_primitive": {
+    "kind": "bundled app allocUnsafeSlow partial-copy disclosure",
+    "known_image_offset": "0x3cb2b1a",
+    "oracle_used": false,
+    "record_offset": "0x68"
+  },
+  "relocated_chain": {
+    "address_source": "network-only app-level split-stream disclosure",
+    "attempts": [
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 1,
+        "container_log_tail": "",
+        "elapsed_seconds": 2.946,
+        "error": "RuntimeError: no recognized Node image pointer in 8 network-only probes",
+        "leak_attempts": null,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 2,
+        "container_log_tail": "",
+        "elapsed_seconds": 7.405,
+        "error": "TimeoutError: timed out",
+        "leak_attempts": 3,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 3,
+        "container_log_tail": "",
+        "elapsed_seconds": 8.717,
+        "error": "TimeoutError: timed out",
+        "leak_attempts": 8,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 4,
+        "container_log_tail": "",
+        "elapsed_seconds": 3.001,
+        "error": "RuntimeError: no recognized Node image pointer in 8 network-only probes",
+        "leak_attempts": null,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 5,
+        "container_log_tail": "",
+        "elapsed_seconds": 7.429,
+        "error": "TimeoutError: timed out",
+        "leak_attempts": 3,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 6,
+        "container_log_tail": "",
+        "elapsed_seconds": 7.089,
+        "error": "TimeoutError: timed out",
+        "leak_attempts": 2,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 7,
+        "container_log_tail": "",
+        "elapsed_seconds": 3.002,
+        "error": "RuntimeError: no recognized Node image pointer in 8 network-only probes",
+        "leak_attempts": null,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 8,
+        "container_log_tail": "",
+        "elapsed_seconds": 7.889,
+        "error": "TimeoutError: timed out",
+        "leak_attempts": 5,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 9,
+        "container_log_tail": "",
+        "elapsed_seconds": 6.855,
+        "error": "TimeoutError: timed out",
+        "leak_attempts": 1,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 10,
+        "container_log_tail": "",
+        "elapsed_seconds": 8.203,
+        "error": "TimeoutError: timed out",
+        "leak_attempts": 6,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 11,
+        "container_log_tail": "",
+        "elapsed_seconds": 6.798,
+        "error": "TimeoutError: timed out",
+        "leak_attempts": 1,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 12,
+        "container_log_tail": "",
+        "elapsed_seconds": 7.332,
+        "error": "TimeoutError: timed out",
+        "leak_attempts": 3,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 13,
+        "container_log_tail": "",
+        "elapsed_seconds": 7.345,
+        "error": "TimeoutError: timed out",
+        "leak_attempts": 3,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 14,
+        "container_log_tail": "",
+        "elapsed_seconds": 7.919,
+        "error": "TimeoutError: timed out",
+        "leak_attempts": 5,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 15,
+        "container_log_tail": "",
+        "elapsed_seconds": 2.969,
+        "error": "RuntimeError: no recognized Node image pointer in 8 network-only probes",
+        "leak_attempts": null,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 16,
+        "container_log_tail": "",
+        "elapsed_seconds": 2.96,
+        "error": "RuntimeError: no recognized Node image pointer in 8 network-only probes",
+        "leak_attempts": null,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 17,
+        "container_log_tail": "",
+        "elapsed_seconds": 3.003,
+        "error": "RuntimeError: no recognized Node image pointer in 8 network-only probes",
+        "leak_attempts": null,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 18,
+        "container_log_tail": "",
+        "elapsed_seconds": 7.145,
+        "error": "TimeoutError: timed out",
+        "leak_attempts": 2,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 19,
+        "container_log_tail": "",
+        "elapsed_seconds": 3.003,
+        "error": "RuntimeError: no recognized Node image pointer in 8 network-only probes",
+        "leak_attempts": null,
+        "outcome": "not-verified"
+      },
+      {
+        "candidate": "v24-0x330",
+        "container_attempt": 20,
+        "container_log_tail": "",
+        "elapsed_seconds": 8.167,
+        "error": "TimeoutError: timed out",
+        "leak_attempts": 6,
+        "outcome": "not-verified"
+      }
+    ],
+    "debugger_used": false,
+    "result": "rce-not-verified",
+    "runtime_address_read_used": false
+  },
+  "result": "pie-relocated-chain-validation",
+  "scope": "bundled loopback worker-record-transform lab"
+}
+

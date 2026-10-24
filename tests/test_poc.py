@@ -3,6 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import struct
 import sys
 import unittest
 
@@ -28,6 +29,13 @@ SELECTOR = importlib.util.module_from_spec(SELECTOR_SPEC)
 assert SELECTOR_SPEC.loader is not None
 sys.modules[SELECTOR_SPEC.name] = SELECTOR
 SELECTOR_SPEC.loader.exec_module(SELECTOR)
+
+PIE_LEAK_PATH = ROOT / "tools" / "investigate_pie_leak.py"
+PIE_LEAK_SPEC = importlib.util.spec_from_file_location("investigate_pie_leak", PIE_LEAK_PATH)
+PIE_LEAK = importlib.util.module_from_spec(PIE_LEAK_SPEC)
+assert PIE_LEAK_SPEC.loader is not None
+sys.modules[PIE_LEAK_SPEC.name] = PIE_LEAK
+PIE_LEAK_SPEC.loader.exec_module(PIE_LEAK)
 
 
 class PocTests(unittest.TestCase):
@@ -269,6 +277,75 @@ class PocTests(unittest.TestCase):
                 self.assertEqual(successful["runtime"]["kernel_randomize_va_space"], 2)
                 self.assertFalse(successful["runtime"]["ld_preload_present"])
 
+    def test_pie_maps_parser_and_stable_candidate_rule(self):
+        mappings = PIE_LEAK.parse_maps(
+            "555500000000-555500001000 r--p 00000000 08:01 1 /usr/local/bin/node\n"
+            "555500001000-555500003000 r-xp 00001000 08:01 1 /usr/local/bin/node\n"
+            "7f0000000000-7f0000010000 rw-p 00000000 00:00 0 [heap]\n"
+        )
+        self.assertEqual(PIE_LEAK.node_load_bias(mappings), 0x555500000000)
+        sample = bytearray(PIE_LEAK.RECORD_SIZE)
+        struct.pack_into("<Q", sample, 0x18, 0x555500001234)
+        analyzed = PIE_LEAK.analyze_capture(bytes(sample), mappings)
+        self.assertEqual(analyzed["mapped_qword_counts"]["node-image"], 1)
+        self.assertEqual(
+            analyzed["node_image_candidates"][0]["image_offset"], "0x1234"
+        )
+        first = {"node_image_candidates": analyzed["node_image_candidates"]}
+        second = {"node_image_candidates": analyzed["node_image_candidates"]}
+        stable = PIE_LEAK.stable_candidates([first, second])
+        self.assertEqual(len(stable), 1)
+        self.assertEqual(stable[0]["trials_observed"], 2)
+
+    def test_pie_leak_evidence_separates_feasibility_from_rce(self):
+        evidence_dir = ROOT / "evidence" / "pie-address-leak"
+        summary = json.loads((evidence_dir / "summary.json").read_text(encoding="utf-8"))
+        survey = json.loads((evidence_dir / "24.22.0.json").read_text(encoding="utf-8"))
+        relocated = json.loads(
+            (evidence_dir / "relocated-chain-24.22.0.json").read_text(encoding="utf-8")
+        )
+        oracle = json.loads(
+            (evidence_dir / "oracle-control-24.22.0.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(
+            summary["result"], "pie-address-leak-feasible-rce-not-yet-verified"
+        )
+        self.assertEqual(survey["binary"]["elf_type"], "ET_DYN")
+        self.assertEqual(survey["trial_count"], 100)
+        self.assertEqual(survey["distinct_node_load_bias_count"], 100)
+        self.assertEqual(survey["result"], "usable-node-image-leak-observed")
+        self.assertFalse(survey["method"]["debugger_used"])
+        self.assertFalse(survey["method"]["oracle_address_fed_to_request"])
+        split = survey["stable_node_image_candidates"]["split_stream"]
+        self.assertTrue(
+            any(
+                item["record_offset"] == "0x68"
+                and item["image_offset"] == "0x3cb2b1a"
+                and item["trials_observed"] >= 2
+                for item in split
+            )
+        )
+
+        network = relocated["relocated_chain"]
+        self.assertEqual(network["result"], "rce-not-verified")
+        self.assertFalse(network["debugger_used"])
+        self.assertFalse(network["runtime_address_read_used"])
+        self.assertEqual(len(network["attempts"]), 20)
+        self.assertEqual(
+            sum(item["leak_attempts"] is not None for item in network["attempts"]),
+            13,
+        )
+        self.assertEqual(
+            sum(item["outcome"] == "rce-proof" for item in network["attempts"]),
+            0,
+        )
+        control = oracle["oracle_relocated_chain"]
+        self.assertTrue(control["runtime_address_read_used"])
+        self.assertEqual(control["result"], "rce-not-verified")
+        self.assertEqual(len(control["attempts"]), 3)
+
 
 if __name__ == "__main__":
     unittest.main()
+

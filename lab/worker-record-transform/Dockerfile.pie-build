@@ -1,0 +1,30 @@
+ARG BUILD_BASE=ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
+FROM ${BUILD_BASE} AS builder
+
+ARG NODE_VERSION=24.22.0
+ARG NODE_SOURCE_SHA256=41f97cff2c666f1f8293dc5f85c65e8dd605c16b43fd9febd49ede32ee1e0329
+ARG BUILD_JOBS=8
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates curl g++ make python3 xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+RUN curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}.tar.xz" \
+    && echo "${NODE_SOURCE_SHA256}  node-v${NODE_VERSION}.tar.xz" | sha256sum -c - \
+    && tar -xf "node-v${NODE_VERSION}.tar.xz" \
+    && cd "node-v${NODE_VERSION}" \
+    && export CFLAGS=-fPIE CXXFLAGS=-fPIE LDFLAGS=-pie \
+    && ./configure --without-npm --without-corepack \
+    && make -j"${BUILD_JOBS}" \
+    && test "$(readelf -h out/Release/node | sed -n 's/^ *Type: *\([^ ]*\).*/\1/p')" = DYN
+
+FROM ${BUILD_BASE}
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates libatomic1 libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /build/node-v24.22.0/out/Release/node /usr/local/bin/node-pie
+ENTRYPOINT ["/usr/local/bin/node-pie"]
+

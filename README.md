@@ -84,6 +84,36 @@ CA 인증서만 더한 `Dockerfile.runtime`으로 만들었다. `libatomic1`은 
 바이너리의 런타임 의존성이다. 모든 시나리오는 ASLR=2를 유지하고 GDB, 런타임
 주소 읽기 및 `LD_PRELOAD`를 사용하지 않았다.
 
+### PIE 빌드와 주소 누출 조사
+
+공식 Linux x64 Node 바이너리의 non-PIE 전제에서 벗어나기 위해 공식
+`node-v24.22.0.tar.xz`를 SHA-256으로 검증하고 `-fPIE`/`-pie`로 다시 빌드했다.
+생성물은 x86-64 `ET_DYN`, NX stack, Full RELRO이며 바이너리 SHA-256은
+`93102becef36fbf01564e5af4e3a62cea0f6ee08d331db78a994b36bc7b490b2`다. ASLR을
+켠 fresh 컨테이너 100개의 로드 베이스가 모두 달랐다.
+
+100회 네트워크 응답을 캡처한 뒤에만 `/proc/1/maps`를 판정 오라클로 대조한 결과,
+번들 앱의 `Buffer.allocUnsafeSlow` partial-copy tail에서 같은 Node 이미지 상대
+포인터가 5/100회 재현됐다. 응답 record의 `0x68` 위치 값에서 알려진 이미지
+offset `0x3cb2b1a`를 빼면 page-aligned PIE load bias가 된다. CVE grooming 출력에서도
+첫 record `0x320` 위치의 이미지 offset `0x3a42bb8`이 같은 위치에서 2/100회
+재현됐다. 별도 진단 1회에서 네트워크로 계산한 load bias가 maps 오라클과 정확히
+일치했다.
+
+이로써 **이 번들 앱에서는 PIE 주소 누출 가능성까지 확인**했다. 다만 이는
+CVE 자체의 read primitive가 아니라 앱이 짧은 chunk를 초기화하지 않은 record
+전체로 복사해 반환하는 별도 동작에 의존한다. 임의 Node 서비스에 적용되는 보편적
+PIE 우회가 아니다.
+
+누출 주소를 실제 요청에 넣지 않은 조사와 별도로, maps·GDB 없이 네트워크 누출만으로
+주소를 보정하는 체인도 실행했다. 20개 fresh 컨테이너 중 13개에서 최대 8회의
+benign probe 안에 load bias를 복구했지만 고정 `/usr/bin/id` RCE는 0/13이었다.
+maps로 주소를 즉시 보정하고 누출 전 heap 교란을 제거한 대조군도 0/3이므로, 현재
+남은 blocker는 PIE 주소가 아니라 **source-built 바이너리에 맞는 새 worker-heap
+상대 layout**이다. 따라서 이 단계에서는 PIE RCE를 주장하지 않는다. 상세 집계는
+[evidence/pie-address-leak/summary.json](evidence/pie-address-leak/summary.json)에
+있다.
+
 이 84/84 결과의 범위는 다음 조건으로 한정된다.
 
 - Node.js 공식 `node-v<version>-linux-x64.tar.xz` 바이너리
@@ -251,6 +281,32 @@ sudo -E python3 tools/verify_runtime_scenarios.py \
 공식 영향 범위의 특정 릴리스·고정 시나리오만 선택할 수 있으며, 외부 대상이나
 명령을 지정하는 옵션은 없다.
 
+PIE 조사용 정확한 24.22.0 build recipe와 누출 탐지기는 다음처럼 사용한다.
+
+```bash
+docker build --platform linux/amd64 \
+  -t node2shell-node-pie:24.22.0 \
+  -f lab/worker-record-transform/Dockerfile.pie-build \
+  lab/worker-record-transform
+
+cid=$(docker create node2shell-node-pie:24.22.0)
+docker cp "$cid":/usr/local/bin/node-pie ./node-pie-24.22.0
+docker rm "$cid"
+
+sudo -E python3 tools/investigate_pie_leak.py \
+  --node-binary ./node-pie-24.22.0 --trials 100 \
+  --test-static-chain --output evidence/pie-address-leak/24.22.0.json
+
+sudo -E python3 tools/investigate_pie_leak.py \
+  --node-binary ./node-pie-24.22.0 --relocated-only \
+  --leak-attempt-limit 8 --container-attempt-limit 20 \
+  --output evidence/pie-address-leak/relocated-chain-24.22.0.json
+```
+
+첫 명령은 캡처가 끝난 뒤 maps를 판정 오라클로 읽는 feasibility survey다. 두 번째
+명령은 maps·debugger·`LD_PRELOAD` 없이 네트워크 응답에서만 load bias를 계산하고,
+고정 `/usr/bin/id` 체인만 시도한다. 외부 target·callback·명령 옵션은 없다.
+
 runner는 공식 배포 인덱스와 각 릴리스의 `SHASUMS256.txt`를 받고, 해당 버전의
 `bin/node`만 임시로 추출한다. 정적 프로필 생성, 읽기 전용 GDB 보정, 격리 Docker
 검증 뒤 임시 바이너리는 삭제하고 프로필과 JSON 증거만 남긴다. 이미
@@ -276,11 +332,13 @@ python3 -m unittest discover -s tests -v
 - `tools/verify_aslr_network_matrix.py`: GDB 없는 공식 84개 ASLR 매트릭스 실행기
 - `poc/heap_layout_selector.py`: 검증된 바이너리 지문 기반 heap layout 선택기
 - `tools/verify_runtime_scenarios.py`: Debian/Ubuntu 서비스·noise·동시성 반복 검증기
+- `tools/investigate_pie_leak.py`: PIE 누출 survey와 network-only 재배치 체인 검증기
 - `poc/profiles/`: 버전별 통합 v4 프로필 84개
 - `evidence/matrix/`: 버전별 검증 증거와 전체 요약
 - `evidence/aslr-on-debugger-steered/`: ASLR 활성·GDB 보조 버전별 증거와 전체 요약
 - `evidence/aslr-on-network-only/`: ASLR 활성·GDB 없는 버전별 증거와 전체 요약
 - `evidence/runtime-scenarios/`: 대표 3개 릴리스의 54개 서비스 시나리오 trial 증거
+- `evidence/pie-address-leak/`: PIE build, 누출 및 재배치 체인의 분리된 증거
 - `lab/express-nonce-proof/`: Express 앱, 고정 `/n2s`, 감독 루프와 Dockerfile
 - `lab/worker-record-transform/`: worker/zlib/record/ICU heap 실험 앱
 - `lab/run.sh`: `24.22.0` 취약/`24.22.1` 수정 대조군 실행기
@@ -289,6 +347,8 @@ python3 -m unittest discover -s tests -v
 
 - [Node.js 2026년 10월 보안 릴리스](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)
 - [Node.js 공식 배포 인덱스](https://nodejs.org/dist/index.json)
+- [Node.js 공식 Linux x64 PIE 도입 제안](https://github.com/nodejs/node/issues/66951)
+- [Node.js 공식 BUILDING 문서](https://github.com/nodejs/node/blob/v24.22.0/BUILDING.md)
 - [Imperva의 Node2Shell RCE 분석](https://www.imperva.com/blog/node2shell-from-brotli-data-to-remote-code-execution/)
 - [검토한 공개 PoC](https://github.com/dimasma0305/CVE-2026-111497-POC/tree/e3382551df02b3ac8c925aeeffb9e0d206f052d4)
 - [upstream Brotli 수정](https://github.com/google/brotli/commit/0ed4268a4401abcb4472096340477cf4af7d1a2b)
@@ -298,3 +358,4 @@ python3 -m unittest discover -s tests -v
 nonce 판정 기록은
 [evidence/2026-10-23-nonce-proof.txt](evidence/2026-10-23-nonce-proof.txt)에
 보존했다.
+
