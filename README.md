@@ -55,6 +55,35 @@ Node 애플리케이션에 보편적으로 적용되는 ASLR 우회를 주장하
 [evidence/aslr-on-network-only-24.22.0.json](evidence/aslr-on-network-only-24.22.0.json)에
 그대로 보존했다.
 
+### Debian/Ubuntu 서비스 시나리오와 반복 성공률
+
+공식 영향 범위의 각 major에서 마지막 취약 릴리스인 `22.23.3`, `24.22.0`,
+`26.12.0`을 대표로 골라 Debian 12와 Ubuntu 24.04 사용자 공간에서 여섯 가지
+서비스 시나리오를 각 3회 검증했다. 각 trial은 새 read-only 컨테이너에서 시작하며,
+첫 시도가 실패하면 최대 3개의 독립 컨테이너까지만 자동 재시도한다.
+
+| 시나리오 | 구성 | trial 성공 | 첫 시도 성공 | 실제 attempt 성공 |
+| --- | --- | ---: | ---: | ---: |
+| Debian baseline | 기본 worker-per-connection | 9/9 | 9/9 | 9/9 |
+| Debian observed + noise | 관측 메타데이터, retained heap block 8개, 257-byte 입력 분할 | 9/9 | 6/9 | 9/12 |
+| Debian socket + concurrent | keepalive/timeout/no-delay, 동시 idle client 2개, 97-byte 입력 분할 | 9/9 | 9/9 | 9/9 |
+| Ubuntu baseline | 기본 worker-per-connection | 9/9 | 9/9 | 9/9 |
+| Ubuntu observed + noise | 관측 메타데이터, retained heap block 8개, 257-byte 입력 분할 | 9/9 | 7/9 | 9/11 |
+| Ubuntu socket + concurrent | keepalive/timeout/no-delay, 동시 idle client 2개, 97-byte 입력 분할 | 9/9 | 8/9 | 9/10 |
+| **합계** | 3개 릴리스 × 6개 시나리오 × 3회 | **54/54** | **48/54** | **54/60** |
+
+따라서 제한된 자동 재시도 후 trial 성공률은 100%였지만, 단일 attempt의 성공률은
+90%이고 첫 시도 성공률은 88.9%다. 특히 heap noise가 있는 구성은 첫 시도 성공률이
+낮다. 이 수치는 임의 서비스에서의 보편적 신뢰도가 아니라, 아래에 고정한 두
+사용자 공간과 번들 앱에서 얻은 반복 측정값이다. 전체 집계는
+[evidence/runtime-scenarios/summary.json](evidence/runtime-scenarios/summary.json),
+시도별 오류·이미지 ID·proof token과 `id` 출력은 버전별 JSON에 있다.
+
+Ubuntu 런타임은 digest로 고정한 Ubuntu 24.04 base에 `libstdc++6`, `libatomic1`과
+CA 인증서만 더한 `Dockerfile.runtime`으로 만들었다. `libatomic1`은 Node 26 공식
+바이너리의 런타임 의존성이다. 모든 시나리오는 ASLR=2를 유지하고 GDB, 런타임
+주소 읽기 및 `LD_PRELOAD`를 사용하지 않았다.
+
 이 84/84 결과의 범위는 다음 조건으로 한정된다.
 
 - Node.js 공식 `node-v<version>-linux-x64.tar.xz` 바이너리
@@ -68,6 +97,8 @@ Node 애플리케이션에 보편적으로 적용되는 ASLR 우회를 주장하
 - worker heap 후보는 22.x의 두 ring 거리와 0x220/0x250 record, 24.x의
   0x330/0x200 record, 26.x의 0x200 record로 제한
 - loopback의 `127.0.0.1:3000`만 사용하는 고정 실험 앱
+- Debian/Ubuntu 시나리오 결과는 major별 대표 릴리스 3개에 한정되며 84개 전부에
+  대해 6개 구성을 반복했다는 의미는 아님
 
 따라서 다른 운영체제, CPU 아키텍처 또는 배포판 재빌드에 그대로 일반화한 결과는
 아니다. ASLR-off 결과는 공식 바이너리별 direct ROP를 결정적으로 검증하기 위한
@@ -150,6 +181,12 @@ exploit 로직도 바이너리 차이를 흡수하도록 다음과 같이 바꿨
 - Brotli 출력 buffer는 0x330으로 유지하면서 후속 record 크기만 분리해, 릴리스별로
   자연스럽게 채워진 tcache bin을 선택한다. 22.x의 ring-layout 전환도 후보 순서에
   반영한다.
+- 버전 구간 조건문 대신 기존 network-only 성공 증거의 Node 바이너리 SHA-256을
+  조회해 정확히 검증된 heap layout을 우선 선택한다. 등록되지 않은 바이너리는
+  allowlist 전체를 fallback으로만 제공하고 정확한 일치로 표시하지 않는다.
+- 입력을 1~4096 byte 단위로 분할하고 최대 8개의 benign 동시 연결을 유지할 수
+  있도록 체인을 확장했다. 반복 검증기는 첫 시도 성공률과 제한된 재시도 후 성공률을
+  따로 기록한다.
 
 이 개선으로 22.x의 여러 source offset과 FD 19/22 전환, 24.x의 prefix 겹침,
 26.x의 레지스터 상태 및 빌드별 stack 위치 차이를 하나의 체인으로 처리했다.
@@ -199,6 +236,21 @@ sudo -E python3 tools/verify_aslr_network_matrix.py \
 생성한 뒤 read-only Docker에서 각 layout을 기본 두 번까지 시도한다. 결과는
 `evidence/aslr-on-network-only/<version>.json`에 기록한다.
 
+Debian/Ubuntu 서비스 시나리오 반복 검증은 다음과 같다.
+
+```bash
+docker build --platform linux/amd64 \
+  -t node2shell-worker-runtime:ubuntu-24.04 \
+  -f lab/worker-record-transform/Dockerfile.runtime \
+  lab/worker-record-transform
+sudo -E python3 tools/verify_runtime_scenarios.py \
+  --trials 3 --attempts-per-trial 3
+```
+
+기본값은 대표 릴리스 3개와 여섯 시나리오다. `--version`과 `--scenario`로
+공식 영향 범위의 특정 릴리스·고정 시나리오만 선택할 수 있으며, 외부 대상이나
+명령을 지정하는 옵션은 없다.
+
 runner는 공식 배포 인덱스와 각 릴리스의 `SHASUMS256.txt`를 받고, 해당 버전의
 `bin/node`만 임시로 추출한다. 정적 프로필 생성, 읽기 전용 GDB 보정, 격리 Docker
 검증 뒤 임시 바이너리는 삭제하고 프로필과 JSON 증거만 남긴다. 이미
@@ -222,10 +274,13 @@ python3 -m unittest discover -s tests -v
 - `tools/verify_release_matrix.py`: 공식 범위 산출, 해시 검증, 보정 및 84개 matrix 실행
 - `poc/node2shell_heap.py`: loopback·고정 `id` 전용 ASLR-on worker-heap 체인
 - `tools/verify_aslr_network_matrix.py`: GDB 없는 공식 84개 ASLR 매트릭스 실행기
+- `poc/heap_layout_selector.py`: 검증된 바이너리 지문 기반 heap layout 선택기
+- `tools/verify_runtime_scenarios.py`: Debian/Ubuntu 서비스·noise·동시성 반복 검증기
 - `poc/profiles/`: 버전별 통합 v4 프로필 84개
 - `evidence/matrix/`: 버전별 검증 증거와 전체 요약
 - `evidence/aslr-on-debugger-steered/`: ASLR 활성·GDB 보조 버전별 증거와 전체 요약
 - `evidence/aslr-on-network-only/`: ASLR 활성·GDB 없는 버전별 증거와 전체 요약
+- `evidence/runtime-scenarios/`: 대표 3개 릴리스의 54개 서비스 시나리오 trial 증거
 - `lab/express-nonce-proof/`: Express 앱, 고정 `/n2s`, 감독 루프와 Dockerfile
 - `lab/worker-record-transform/`: worker/zlib/record/ICU heap 실험 앱
 - `lab/run.sh`: `24.22.0` 취약/`24.22.1` 수정 대조군 실행기

